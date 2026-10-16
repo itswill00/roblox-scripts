@@ -1,4 +1,4 @@
--- NullShight NetLens // v1.0.0 -- RemoteSpy
+-- NullShight NetLens // v1.0.1 -- RemoteSpy
 -- A precise, low-footprint network lens: logs RemoteEvent/RemoteFunction
 -- traffic, coalesces duplicates, and generates paste-ready call snippets.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -239,6 +239,9 @@ local byKey = {}        -- signature -> entry (merge mode)
 local blacklist = {}    -- remote path -> true
 local totalCalls = 0
 local remoteSet = {}
+local ncTotal = 0
+local hookInfo = "installing.."
+local statusLabel = nil
 local rows = {}         -- entry -> row frame
 local listFrame = nil
 local subLabel = nil
@@ -246,13 +249,19 @@ local subLabel = nil
 local function statsText()
     local n = 0
     for _ in pairs(remoteSet) do n = n + 1 end
-    return "NETLENS v1.0.0  |  " .. tostring(n) .. " remotes  |  " ..
+    return "NETLENS v1.0.1  |  " .. tostring(n) .. " remotes  |  " ..
         tostring(totalCalls) .. " calls"
 end
 
 local function refreshStats()
     if subLabel then
         pcall(function() subLabel.Text = statsText() end)
+    end
+    if statusLabel then
+        pcall(function()
+            statusLabel.Text = hookInfo .. "  |  namecalls seen: " ..
+                tostring(ncTotal)
+        end)
     end
 end
 
@@ -440,10 +449,13 @@ local function logCall(inst, method, args)
 end
 
 -- The hook: single interception point, everything else passes through.
+local hasHook = type(hookmetamethod) == "function"
+local hasGNM = type(getnamecallmethod) == "function"
 pcall(function()
-    if type(hookmetamethod) ~= "function" then return end
+    if not hasHook then return end
     local wrap = newcclosure or function(f) return f end
     oldNC = hookmetamethod(game, "__namecallmethod", wrap(function(self, ...)
+        ncTotal = ncTotal + 1
         local method = ""
         pcall(function()
             if type(getnamecallmethod) == "function" then
@@ -722,7 +734,7 @@ local function buildUI()
         return btn
     end
 
-    local bw = (PW - 24 - 16) / 3
+    local bw = (PW - 24 - 24) / 4
     toolBtn(0, bw, "PAUSE", function(btn)
         state.paused = not state.paused
         btn.Text = state.paused and "RESUME" or "PAUSE"
@@ -743,7 +755,22 @@ local function buildUI()
         end
         refreshStats()
     end)
-    toolBtn(2 * (bw + 8), bw, "COPY ALL", function()
+    toolBtn(2 * (bw + 8), bw, "TEST", function()
+        -- End-to-end check: fire on a temp local remote. If the hook
+        -- works, a row appears and counters move.
+        pcall(function()
+            local t = Instance.new("RemoteEvent")
+            t.Name = "NetLensSelfTest"
+            t.Parent = workspace
+            t:FireServer("ping", 123)
+            t:Destroy()
+        end)
+        task.delay(0.5, function()
+            note("namecalls=" .. tostring(ncTotal) ..
+                " logged=" .. tostring(totalCalls))
+        end)
+    end)
+    toolBtn(3 * (bw + 8), bw, "COPY ALL", function()
         local lines = {}
         for _, e in ipairs(entries) do
             lines[#lines + 1] = "-- " .. rowText(e) .. "\n" .. e.snippet
@@ -824,8 +851,18 @@ local function buildUI()
         function(v) state.argsOnly = v end)
 
     local scroll = Instance.new("ScrollingFrame")
-    scroll.Size = UDim2.new(1, -24, 0, 178)
+    scroll.Size = UDim2.new(1, -24, 0, 158)
     scroll.Position = UDim2.new(0, 12, 0, 134)
+    statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1, -24, 0, 14)
+    statusLabel.Position = UDim2.new(0, 12, 0, 300)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Font = Enum.Font.Code
+    statusLabel.TextSize = 10
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.TextColor3 = DIM
+    statusLabel.Text = hookInfo
+    statusLabel.Parent = main
     scroll.BackgroundTransparency = 1
     scroll.BorderSizePixel = 0
     scroll.ScrollBarThickness = 3
@@ -891,9 +928,18 @@ if not buildUI() then
     note("UI failed to mount, hook still active")
 end
 
+task.spawn(function()
+    while mine() do
+        refreshStats()
+        task.wait(1)
+    end
+end)
+
 if oldNC == nil then
+    hookInfo = "HOOK FAILED (hookmetamethod missing or rejected)"
     note("Hook failed on this executor")
 else
+    hookInfo = "hook:OK gnm:" .. (hasGNM and "OK" or "MISSING")
     note("NetLens armed. Do an action in-game.")
 end
 
