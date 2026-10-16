@@ -6,7 +6,7 @@
 local CONFIG = {
     -- RemoteEvent/RemoteFunction names, mapped per game update. Find them
     -- with Dex/SimpleSpy while swinging once, then paste here.
-    SwingRemote = nil,      -- e.g. "SwingEvent", path from ReplicatedStorage
+    SwingRemote = "SlashRemotes.SlashRequest", -- mapped 2026-10-16
     RebirthRemote = nil,    -- e.g. "RebirthEvent"
     EggRemote = nil,        -- e.g. "HatchEgg"
     AutoSwing = true,
