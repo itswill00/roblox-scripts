@@ -1,4 +1,4 @@
--- NullShight Sword Loot Monarch // v0.1.1
+-- NullShight Sword Loot Monarch // v0.1.2
 -- Game: +1 Sword Loot Monarch (93239606899307). Clicker loop: click for
 -- power, train, clear stages, loot, forge swords, rebirth.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -18,8 +18,8 @@ local CONFIG = {
     TrainArgs = {},
     StageRemote = nil,                   -- fill after mapping (farm/attack)
     StageArgs = {},
-    RebirthRemote = nil,                 -- fill after mapping
-    RebirthArgs = {},
+    RebirthRemote = "Remotes.MainFunction", -- InvokeServer, mapped 2026-10-16
+    RebirthArgs = { 173 },
     CollectRemote = nil,                 -- fill after mapping
     CollectArgs = {},
     AutoTrain = false,                   -- on once TrainRemote mapped
@@ -419,7 +419,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "SWORD LOOT MONARCH v0.1.1"
+    sub.Text = "SWORD LOOT MONARCH v0.1.2"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -692,26 +692,30 @@ local function buildUI()
     end)
 
     local farm = pages.farm
-    local function needRemote(label, path)
+    local function farmToggle(label, key, path, args)
         return function(v)
-            if v and not findRemote(path) then
-                note(label .. " remote not mapped yet")
+            state[key] = v
+            if v then
+                if findRemote(path) then
+                    pcall(fireMapped, path, args)
+                else
+                    note(label .. " remote not mapped yet")
+                end
             end
-            return v
         end
     end
-    toggleCell(farm, 0, 0, "Auto Train", state.autoTrain, function(v)
-        state.autoTrain = needRemote("Train", CONFIG.TrainRemote)(v)
-    end)
-    toggleCell(farm, 1, 0, "Auto Stage", state.autoStage, function(v)
-        state.autoStage = needRemote("Stage", CONFIG.StageRemote)(v)
-    end)
-    toggleCell(farm, 0, 1, "Auto Rebirth", state.autoRebirth, function(v)
-        state.autoRebirth = needRemote("Rebirth", CONFIG.RebirthRemote)(v)
-    end)
-    toggleCell(farm, 1, 1, "Auto Collect", state.autoCollect, function(v)
-        state.autoCollect = needRemote("Collect", CONFIG.CollectRemote)(v)
-    end)
+    toggleCell(farm, 0, 0, "Auto Train", state.autoTrain,
+        farmToggle("Train", "autoTrain",
+            CONFIG.TrainRemote, CONFIG.TrainArgs))
+    toggleCell(farm, 1, 0, "Auto Stage", state.autoStage,
+        farmToggle("Stage", "autoStage",
+            CONFIG.StageRemote, CONFIG.StageArgs))
+    toggleCell(farm, 0, 1, "Auto Rebirth", state.autoRebirth,
+        farmToggle("Rebirth", "autoRebirth",
+            CONFIG.RebirthRemote, CONFIG.RebirthArgs))
+    toggleCell(farm, 1, 1, "Auto Collect", state.autoCollect,
+        farmToggle("Collect", "autoCollect",
+            CONFIG.CollectRemote, CONFIG.CollectArgs))
 
     local sys = pages.sys
     wideBtn(sys, 0, "FIX LAG", function()
