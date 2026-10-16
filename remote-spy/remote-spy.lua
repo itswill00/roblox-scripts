@@ -1,4 +1,4 @@
--- NullShight NetLens // v1.1.0 -- RemoteSpy
+-- NullShight NetLens // v1.2.0 -- RemoteSpy
 -- A precise, low-footprint network lens: logs RemoteEvent/RemoteFunction
 -- traffic, coalesces duplicates, and generates paste-ready call snippets.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -253,28 +253,109 @@ local totalCalls = 0
 local remoteSet = {}
 local ncTotal = 0
 local hookInfo = "installing.."
-local statusLabel = nil
 local rows = {}         -- entry -> row frame
 local listFrame = nil
 local subLabel = nil
+local detLine1, detLine2 = nil, nil
+local selected = nil
+local filterText = ""
+local seqNum = 0
 
 local function statsText()
     local n = 0
     for _ in pairs(remoteSet) do n = n + 1 end
-    return "NETLENS v1.1.0  |  " .. tostring(n) .. " remotes  |  " ..
-        tostring(totalCalls) .. " calls"
+    return "NETLENS v1.2.0  |  " .. tostring(n) .. " remotes  |  " ..
+        tostring(totalCalls) .. " calls  |  " .. hookInfo
 end
 
 local function refreshStats()
     if subLabel then
         pcall(function() subLabel.Text = statsText() end)
     end
-    if statusLabel then
+end
+
+local function paintSel()
+    for e, r in pairs(rows) do
         pcall(function()
-            statusLabel.Text = hookInfo .. "  |  remotes seen: " ..
-                tostring(ncTotal)
+            r.BackgroundColor3 = (e == selected)
+                and Color3.fromRGB(34, 44, 62)
+                or Color3.fromRGB(24, 27, 36)
         end)
     end
+end
+
+local function selectEntry(e)
+    selected = e
+    paintSel()
+    if detLine1 then
+        pcall(function()
+            if e then
+                detLine1.Text = e.snippetPreview
+                detLine1.TextColor3 = Color3.fromRGB(235, 235, 242)
+            else
+                detLine1.Text = "Tap a row: copy, re-fire, blacklist."
+                detLine1.TextColor3 = Color3.fromRGB(150, 155, 175)
+            end
+        end)
+    end
+    if detLine2 then
+        pcall(function()
+            detLine2.Text = e and e.preview or ""
+        end)
+    end
+end
+
+local function copySelected()
+    local e = selected
+    if not e then
+        note("Nothing selected")
+        return
+    end
+    local ok = pcall(function()
+        if type(setclipboard) == "function" then
+            setclipboard(e.snippet)
+        else
+            error("no clipboard")
+        end
+    end)
+    note(ok and "Snippet copied" or "Copy failed on this executor")
+end
+
+local function fireSelected()
+    local e = selected
+    if not e or not e.ref then
+        note("Nothing to fire")
+        return
+    end
+    local ok, err = pcall(function()
+        if e.method == "FireServer" then
+            e.ref:FireServer(unpack(e.callArgs))
+        else
+            e.ref:InvokeServer(unpack(e.callArgs))
+        end
+    end)
+    note(ok and ("Fired " .. e.name) or ("Fire failed: " .. tostring(err)))
+end
+
+local function blacklistSelected()
+    local e = selected
+    if not e then
+        note("Nothing selected")
+        return
+    end
+    blacklist[e.path] = true
+    for i = #entries, 1, -1 do
+        if entries[i].path == e.path then
+            local dead = table.remove(entries, i)
+            byKey[dead.key] = nil
+            local r = rows[dead]
+            rows[dead] = nil
+            if r then pcall(function() r:Destroy() end) end
+        end
+    end
+    selectEntry(nil)
+    refreshStats()
+    note("Blacklisted " .. e.name)
 end
 
 local function pruneRows()
@@ -284,37 +365,40 @@ local function pruneRows()
         local r = rows[e]
         rows[e] = nil
         if r then pcall(function() r:Destroy() end) end
+        if selected == e then selectEntry(nil) end
     end
 end
 
 local function rowText(e)
     local clock = os.date("%X")
-    return clock .. "  " .. e.method .. "  " .. e.name ..
-        (e.count > 1 and ("  x" .. tostring(e.count)) or "")
+    return clock .. " " .. e.method .. " " .. e.name ..
+        (e.count > 1 and (" x" .. tostring(e.count)) or "")
 end
 
 local function mountRow(e)
-    if not listFrame then return end
+    if not listFrame then return nil end
     local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, -8, 0, 48)
+    row.Size = UDim2.new(1, -8, 0, 28)
     row.BackgroundColor3 = Color3.fromRGB(24, 27, 36)
     row.BorderSizePixel = 0
+    row.LayoutOrder = -e.seq
+    row.Visible = filterText == "" or
+        string.find(string.lower(e.name), filterText, 1, true) ~= nil
     row.Parent = listFrame
     local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 8)
+    c.CornerRadius = UDim.new(0, 6)
     c.Parent = row
 
     local tap = Instance.new("TextButton")
-    tap.Size = UDim2.new(1, -52, 1, 0)
-    tap.Position = UDim2.new(0, 0, 0, 0)
+    tap.Size = UDim2.new(1, 0, 1, 0)
     tap.BackgroundTransparency = 1
     tap.Text = ""
     tap.AutoButtonColor = false
     tap.Parent = row
 
     local l1 = Instance.new("TextLabel")
-    l1.Size = UDim2.new(1, -8, 0, 20)
-    l1.Position = UDim2.new(0, 8, 0, 4)
+    l1.Size = UDim2.new(1, -10, 1, 0)
+    l1.Position = UDim2.new(0, 6, 0, 0)
     l1.BackgroundTransparency = 1
     l1.Font = Enum.Font.Code
     l1.TextSize = 11
@@ -324,78 +408,20 @@ local function mountRow(e)
     l1.Text = rowText(e)
     l1.Parent = tap
 
-    local l2 = Instance.new("TextLabel")
-    l2.Size = UDim2.new(1, -8, 0, 16)
-    l2.Position = UDim2.new(0, 8, 0, 26)
-    l2.BackgroundTransparency = 1
-    l2.Font = Enum.Font.Code
-    l2.TextSize = 10
-    l2.TextXAlignment = Enum.TextXAlignment.Left
-    l2.TextColor3 = Color3.fromRGB(150, 155, 175)
-    l2.TextTruncate = Enum.TextTruncate.AtEnd
-    l2.Text = e.preview
-    l2.Parent = tap
-
-    local bl = Instance.new("TextButton")
-    bl.Size = UDim2.new(0, 40, 0, 28)
-    bl.AnchorPoint = Vector2.new(1, 0.5)
-    bl.Position = UDim2.new(1, -6, 0.5, 0)
-    bl.BackgroundColor3 = Color3.fromRGB(46, 24, 26)
-    bl.BorderSizePixel = 0
-    bl.Font = Enum.Font.Code
-    bl.TextSize = 10
-    bl.TextColor3 = Color3.fromRGB(255, 170, 170)
-    bl.Text = "BL"
-    bl.AutoButtonColor = true
-    bl.Parent = row
-    local bc = Instance.new("UICorner")
-    bc.CornerRadius = UDim.new(0, 7)
-    bc.Parent = bl
-
     e.row1 = l1
-    e.row2 = l2
     rows[e] = row
-    return row, tap, bl
+    return row, tap
 end
 
 local pressBegan, pressEnded -- forward decls (UI section assigns)
 
-local function wireRow(e, row, tap, bl, dispName)
-    if not (tap and bl and pressBegan and pressEnded) then return end
+local function wireRow(e, row, tap)
+    if not (tap and pressBegan and pressEnded) then return end
     track(tap.InputBegan:Connect(pressBegan))
     track(tap.InputEnded:Connect(function(input)
         if pressEnded(input) then
-            local ok = pcall(function()
-                if type(setclipboard) == "function" then
-                    setclipboard(e.snippet)
-                else
-                    error("no clipboard")
-                end
-            end)
-            note(ok and "Snippet copied" or "Copy failed on this executor")
-            pcall(function()
-                row.BackgroundColor3 = Color3.fromRGB(34, 48, 40)
-                task.delay(0.25, function()
-                    if row.Parent then
-                        row.BackgroundColor3 = Color3.fromRGB(24, 27, 36)
-                    end
-                end)
-            end)
+            selectEntry(e)
         end
-    end))
-    track(bl.MouseButton1Click:Connect(function()
-        blacklist[e.path] = true
-        for i = #entries, 1, -1 do
-            if entries[i].path == e.path then
-                local dead = table.remove(entries, i)
-                byKey[dead.key] = nil
-                local r = rows[dead]
-                rows[dead] = nil
-                if r then pcall(function() r:Destroy() end) end
-            end
-        end
-        refreshStats()
-        note("Blacklisted " .. dispName)
     end))
 end
 
@@ -430,10 +456,7 @@ local function logCall(inst, method, args)
     if e then
         e.count = e.count + 1
         if e.row1 then
-            pcall(function()
-                e.row1.Text = rowText(e)
-                e.row2.Text = e.preview
-            end)
+            pcall(function() e.row1.Text = rowText(e) end)
         end
         refreshStats()
         return
@@ -447,16 +470,22 @@ local function logCall(inst, method, args)
     local snippet = "local args = { " .. table.concat(sargs, ", ") .. " }\n" ..
         path .. call
 
+    seqNum = seqNum + 1
+    local callArgs = {}
+    for i = 1, n do callArgs[i] = args[i] end
+    local oneLine = (snippet:gsub("\n", " | "))
     e = {
         key = key, method = method, path = path, name = inst.Name,
         count = 1, preview = argsPrev .. "   <- " .. caller,
-        snippet = snippet, row1 = nil, row2 = nil,
+        snippet = snippet,
+        snippetPreview = string.sub(oneLine, 1, 120),
+        callArgs = callArgs, ref = inst, seq = seqNum, row1 = nil,
     }
     byKey[key] = e
     entries[#entries + 1] = e
     pruneRows()
-    local row, tap, bl = mountRow(e)
-    wireRow(e, row, tap, bl, inst.Name)
+    local row, tap = mountRow(e)
+    wireRow(e, row, tap)
     refreshStats()
 end
 
@@ -795,6 +824,7 @@ local function buildUI()
                 end
             end
         end
+        selectEntry(nil)
         refreshStats()
     end)
     toolBtn(2 * (bw + 8), bw, "TEST", function()
@@ -808,7 +838,7 @@ local function buildUI()
             t:Destroy()
         end)
         task.delay(0.5, function()
-            note("namecalls=" .. tostring(ncTotal) ..
+            note("seen=" .. tostring(ncTotal) ..
                 " logged=" .. tostring(totalCalls))
         end)
     end)
@@ -886,25 +916,40 @@ local function buildUI()
             end
         end))
     end
-    local cw = (PW - 24 - 8) / 2
-    miniToggle(0, cw, "Merge dupes", state.merge,
+    local filterBox = Instance.new("TextBox")
+    filterBox.Size = UDim2.new(0, 300, 0, 32)
+    filterBox.Position = UDim2.new(0, 0, 0, 38)
+    filterBox.BackgroundColor3 = CARD
+    filterBox.BorderSizePixel = 0
+    filterBox.Font = Enum.Font.Code
+    filterBox.TextSize = 11
+    filterBox.TextColor3 = INK
+    filterBox.PlaceholderColor3 = DIM
+    filterBox.PlaceholderText = "  filter name.."
+    filterBox.Text = ""
+    filterBox.TextXAlignment = Enum.TextXAlignment.Left
+    filterBox.ClearTextOnFocus = false
+    filterBox.Parent = toolbar
+    round(filterBox, 8)
+    stroke(filterBox, Color3.fromRGB(55, 60, 78), 0.55)
+    track(filterBox:GetPropertyChangedSignal("Text"):Connect(function()
+        filterText = string.lower(filterBox.Text)
+        for e, r in pairs(rows) do
+            pcall(function()
+                r.Visible = filterText == "" or
+                    string.find(string.lower(e.name), filterText, 1, true)
+                        ~= nil
+            end)
+        end
+    end))
+    miniToggle(308, 150, "Merge", state.merge,
         function(v) state.merge = v end)
-    miniToggle(cw + 8, cw, "Args only", state.argsOnly,
+    miniToggle(466, 150, "Args", state.argsOnly,
         function(v) state.argsOnly = v end)
 
     local scroll = Instance.new("ScrollingFrame")
-    scroll.Size = UDim2.new(1, -24, 0, 158)
+    scroll.Size = UDim2.new(1, -24, 0, 140)
     scroll.Position = UDim2.new(0, 12, 0, 134)
-    statusLabel = Instance.new("TextLabel")
-    statusLabel.Size = UDim2.new(1, -24, 0, 14)
-    statusLabel.Position = UDim2.new(0, 12, 0, 300)
-    statusLabel.BackgroundTransparency = 1
-    statusLabel.Font = Enum.Font.Code
-    statusLabel.TextSize = 10
-    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-    statusLabel.TextColor3 = DIM
-    statusLabel.Text = hookInfo
-    statusLabel.Parent = main
     scroll.BackgroundTransparency = 1
     scroll.BorderSizePixel = 0
     scroll.ScrollBarThickness = 3
@@ -916,6 +961,66 @@ local function buildUI()
     layout.SortOrder = Enum.SortOrder.LayoutOrder
     layout.Parent = scroll
     listFrame = scroll
+
+    -- Detail pane: selected entry. COPY / FIRE (re-fire it) / BL.
+    local detail = Instance.new("Frame")
+    detail.Size = UDim2.new(1, -24, 0, 48)
+    detail.Position = UDim2.new(0, 12, 0, 280)
+    detail.BackgroundColor3 = CARD
+    detail.BorderSizePixel = 0
+    detail.Parent = main
+    round(detail, 8)
+    stroke(detail, Color3.fromRGB(55, 60, 78), 0.55)
+
+    detLine1 = Instance.new("TextLabel")
+    detLine1.Size = UDim2.new(1, -216, 0, 20)
+    detLine1.Position = UDim2.new(0, 8, 0, 4)
+    detLine1.BackgroundTransparency = 1
+    detLine1.Font = Enum.Font.Code
+    detLine1.TextSize = 11
+    detLine1.TextXAlignment = Enum.TextXAlignment.Left
+    detLine1.TextColor3 = DIM
+    detLine1.TextTruncate = Enum.TextTruncate.AtEnd
+    detLine1.Text = "Tap a row: copy, re-fire, blacklist."
+    detLine1.Parent = detail
+
+    detLine2 = Instance.new("TextLabel")
+    detLine2.Size = UDim2.new(1, -216, 0, 16)
+    detLine2.Position = UDim2.new(0, 8, 0, 26)
+    detLine2.BackgroundTransparency = 1
+    detLine2.Font = Enum.Font.Code
+    detLine2.TextSize = 10
+    detLine2.TextXAlignment = Enum.TextXAlignment.Left
+    detLine2.TextColor3 = DIM
+    detLine2.TextTruncate = Enum.TextTruncate.AtEnd
+    detLine2.Text = ""
+    detLine2.Parent = detail
+
+    local function detBtn(x, w, label, cb, danger)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0, w, 0, 28)
+        btn.Position = UDim2.new(0, x, 0, 10)
+        btn.BackgroundColor3 = danger and Color3.fromRGB(52, 24, 26)
+            or CARD2
+        btn.BorderSizePixel = 0
+        btn.Font = Enum.Font.Code
+        btn.TextSize = 11
+        btn.TextColor3 = danger and Color3.fromRGB(255, 175, 175) or INK
+        btn.Text = label
+        btn.AutoButtonColor = false
+        btn.Parent = detail
+        round(btn, 7)
+        stroke(btn, danger and Color3.fromRGB(170, 80, 85)
+            or Color3.fromRGB(70, 76, 100), 0.5)
+        track(btn.InputBegan:Connect(pressBegan))
+        track(btn.InputEnded:Connect(function(input)
+            if pressEnded(input) then cb() end
+        end))
+    end
+    local dw = PW - 24
+    detBtn(dw - 204, 70, "COPY", function() copySelected() end)
+    detBtn(dw - 126, 70, "FIRE", function() fireSelected() end)
+    detBtn(dw - 48, 48, "BL", function() blacklistSelected() end, true)
 
     track(game:GetService("UserInputService").InputChanged:Connect(function(input)
         if not dragging then return end
@@ -951,8 +1056,8 @@ local function buildUI()
 
     for _, e in ipairs(entries) do
         if not rows[e] then
-            local erow, etap, ebl = mountRow(e)
-            wireRow(e, erow, etap, ebl, e.name)
+            local erow, etap = mountRow(e)
+            wireRow(e, erow, etap)
         end
     end
     refreshStats()
