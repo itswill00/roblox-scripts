@@ -1,4 +1,4 @@
--- NullShight Greedy Growers // v0.2.0
+-- NullShight Greedy Growers // v0.2.1
 -- Game: Greedy Growers (74102906764176). Loop: beli seed -> tanam round ->
 -- panen sebelum kesamber petir -> jual. Pohon mati dibersihin otomatis.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -58,7 +58,11 @@ local state = {
 }
 
 -- Unload registry: semua koneksi + loop cek ini. Reload dua kali aman.
+-- Generation guard: tiap run naikin counter global, loop run lama yang
+-- masih hidup otomatis berhenti (guard GUI doang nggak matiin loop lama).
 local alive = true
+_G.NSGG_Gen = ((_G.NSGG_Gen or 0) + 1)
+local myGen = _G.NSGG_Gen
 local conns = {}
 local function track(c)
     conns[#conns + 1] = c
@@ -195,7 +199,7 @@ end
 
 -- Core loops: tiap fitur loop mandiri, toggle hidup/mati tanpa peduli lain.
 task.spawn(function()
-    while alive do
+    while alive and _G.NSGG_Gen == myGen do
         if state.autoBuy then
             pcall(fireKnit, CONFIG.BuyService, "RF",
                 CONFIG.BuyRemote, { CONFIG.BuySeedId })
@@ -205,7 +209,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while alive do
+    while alive and _G.NSGG_Gen == myGen do
         if state.autoPlant then
             pcall(fireKnit, CONFIG.PlantService, "RF",
                 CONFIG.PlantRemote, { CONFIG.PlantType, CONFIG.PlantModifier })
@@ -216,7 +220,7 @@ end)
 
 -- Harvest fallback: prompt di sekitar pemain (remote khusus belum ke-map).
 task.spawn(function()
-    while alive do
+    while alive and _G.NSGG_Gen == myGen do
         if state.autoHarvest then
             pcall(function()
                 local root = getRoot()
@@ -244,7 +248,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while alive do
+    while alive and _G.NSGG_Gen == myGen do
         if state.autoDead then
             pcall(fireKnit, CONFIG.PlantService, "RF", CONFIG.DeadRemote, {})
         end
@@ -253,8 +257,8 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while alive do
-        if state.autoSell then
+    while alive and _G.NSGG_Gen == myGen do
+        if state.autoSell and _G.NSGG_Gen == myGen then
             pcall(fireKnit, CONFIG.SellService, "RF", CONFIG.SellRemote, {})
         end
         task.wait(CONFIG.SellDelay)
@@ -262,7 +266,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    while alive do
+    while alive and _G.NSGG_Gen == myGen do
         if state.autoQuest then
             pcall(fireKnit, CONFIG.QuestService, "RE", CONFIG.QuestRemote, {})
         end
@@ -272,6 +276,29 @@ end)
 
 note("NullShight Greedy loaded. AutoPlant " ..
     (state.autoPlant and "ON" or "OFF"))
+
+task.spawn(function()
+    task.wait(2)
+    if _G.NSGG_Gen ~= myGen then return end
+    local want = {
+        { CONFIG.BuyService, "RF", CONFIG.BuyRemote },
+        { CONFIG.PlantService, "RF", CONFIG.PlantRemote },
+        { CONFIG.PlantService, "RF", CONFIG.DeadRemote },
+        { CONFIG.SellService, "RF", CONFIG.SellRemote },
+        { CONFIG.QuestService, "RE", CONFIG.QuestRemote },
+    }
+    local missing = {}
+    for _, w in ipairs(want) do
+        if not knitRemote(w[1], w[2], w[3]) then
+            missing[#missing + 1] = w[3]
+        end
+    end
+    if #missing > 0 then
+        note("Remote hilang: " .. table.concat(missing, ", "))
+    else
+        note("Semua remote OK")
+    end
+end)
 
 -- UI v2 (Fluent-style): kartu gelap rounded, toggle geser, grab-anywhere.
 local TweenService = game:GetService("TweenService")
@@ -468,7 +495,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "GREEDY GROWERS v0.2.0"
+    sub.Text = "GREEDY GROWERS v0.2.1"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -727,14 +754,23 @@ local function buildUI()
 
     -- FARM: grid 2x2. JUAL: 2 toggle + SELL NOW. SYS: FIX LAG + UNLOAD.
     local farm = pages.farm
-    toggleCell(farm, 0, 0, "Auto Buy Seed", state.autoBuy,
-        function(v) state.autoBuy = v end)
-    toggleCell(farm, 1, 0, "Auto Plant", state.autoPlant,
-        function(v) state.autoPlant = v end)
+    toggleCell(farm, 0, 0, "Auto Buy Seed", state.autoBuy, function(v)
+        state.autoBuy = v
+        if v then pcall(fireKnit, CONFIG.BuyService, "RF",
+            CONFIG.BuyRemote, { CONFIG.BuySeedId }) end
+    end)
+    toggleCell(farm, 1, 0, "Auto Plant", state.autoPlant, function(v)
+        state.autoPlant = v
+        if v then pcall(fireKnit, CONFIG.PlantService, "RF",
+            CONFIG.PlantRemote, { CONFIG.PlantType, CONFIG.PlantModifier }) end
+    end)
     toggleCell(farm, 0, 1, "Auto Harvest", state.autoHarvest,
         function(v) state.autoHarvest = v end)
-    toggleCell(farm, 1, 1, "Auto Dead Tree", state.autoDead,
-        function(v) state.autoDead = v end)
+    toggleCell(farm, 1, 1, "Auto Dead Tree", state.autoDead, function(v)
+        state.autoDead = v
+        if v then pcall(fireKnit, CONFIG.PlantService, "RF",
+            CONFIG.DeadRemote, {}) end
+    end)
 
     local jual = pages.jual
     toggleCell(jual, 0, 0, "Auto Sell", state.autoSell, function(v)
@@ -743,8 +779,11 @@ local function buildUI()
             pcall(fireKnit, CONFIG.SellService, "RF", CONFIG.SellRemote, {})
         end
     end)
-    toggleCell(jual, 1, 0, "Auto Quest", state.autoQuest,
-        function(v) state.autoQuest = v end)
+    toggleCell(jual, 1, 0, "Auto Quest", state.autoQuest, function(v)
+        state.autoQuest = v
+        if v then pcall(fireKnit, CONFIG.QuestService, "RE",
+            CONFIG.QuestRemote, {}) end
+    end)
     wideBtn(jual, 1, "SELL NOW", function()
         pcall(fireKnit, CONFIG.SellService, "RF", CONFIG.SellRemote, {})
         note("Selling...")
