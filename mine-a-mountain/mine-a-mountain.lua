@@ -1,4 +1,4 @@
--- NullShight Mine A Mountain // v0.1.0
+-- NullShight Mine A Mountain // v0.2.0
 -- Game: Mine a Mountain (125927821145949). Nambah batu/diamond otomatis:
 -- auto-mine crystal terdekat + auto-sell berkala + ESP.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -525,7 +525,41 @@ task.spawn(function()
     end
 end)
 
--- Panel monokrom + emblem NS. Touch-first kayak skrip Slice.
+-- UI v2: bahasa desain Fluent/WindUI — kartu gelap rounded, satu aksen,
+-- toggle geser beranimasi, buka/tutup + collapse pakai tween, drag halus.
+-- Murni Instance API (tanpa lib eksternal) biar loadstring tetap ringan.
+local TweenService = game:GetService("TweenService")
+
+local ACCENT = Color3.fromRGB(124, 140, 255)
+local CARD = Color3.fromRGB(24, 27, 36)
+local CARD2 = Color3.fromRGB(30, 34, 46)
+local INK = Color3.fromRGB(235, 235, 242)
+local DIM = Color3.fromRGB(150, 155, 175)
+
+local function tw(obj, props, dur, style, dir)
+    local t = TweenService:Create(obj,
+        TweenInfo.new(dur or 0.22, style or Enum.EasingStyle.Quart,
+            dir or Enum.EasingDirection.Out), props)
+    t:Play()
+    return t
+end
+
+local function round(obj, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r)
+    c.Parent = obj
+end
+
+local function stroke(obj, color, transp)
+    local st = Instance.new("UIStroke")
+    st.Color = color
+    st.Transparency = transp or 0.5
+    st.Thickness = 1
+    st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    st.Parent = obj
+end
+
+-- Emblem NS melayang: pad sentuh 96px + visual gradien + pop saat ditekan.
 local function buildEmblem(parent, panel)
     local pad = Instance.new("TextButton")
     pad.Name = "EmblemPad"
@@ -542,17 +576,22 @@ local function buildEmblem(parent, panel)
     emb.Name = "Emblem"
     emb.Size = UDim2.new(0, 56, 0, 56)
     emb.Position = UDim2.new(0.5, -28, 0.5, -28)
-    emb.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
+    emb.BackgroundColor3 = Color3.fromRGB(22, 25, 34)
     emb.BorderSizePixel = 0
     emb.Font = Enum.Font.Code
     emb.TextSize = 18
     emb.TextColor3 = Color3.fromRGB(245, 245, 250)
     emb.Text = "NS"
     emb.Parent = pad
+    round(emb, 28)
 
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = emb
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 45, 66)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(16, 18, 26)),
+    })
+    grad.Rotation = 35
+    grad.Parent = emb
 
     local ring = Instance.new("UIStroke")
     ring.Color = Color3.fromRGB(200, 200, 210)
@@ -567,20 +606,35 @@ local function buildEmblem(parent, panel)
             downPos = input.Position
             startPos = pad.Position
             moved = false
+            tw(emb, { Size = UDim2.new(0, 48, 0, 48),
+                Position = UDim2.new(0.5, -24, 0.5, -24) }, 0.12)
         end
     end))
-    track(pad.InputEnded:Connect(function(input)
+    local function release(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
-            if not moved then
+            tw(emb, { Size = UDim2.new(0, 56, 0, 56),
+                Position = UDim2.new(0.5, -28, 0.5, -28) }, 0.18,
+                Enum.EasingStyle.Back)
+            if not moved and downPos then
                 visible = not visible
-                panel.Visible = visible
+                if visible then
+                    panel.Visible = true
+                    tw(panel, { GroupTransparency = 0 }, 0.22)
+                else
+                    local f = tw(panel, { GroupTransparency = 1 }, 0.18)
+                    pcall(function()
+                        f.Completed:Wait()
+                        if not visible then panel.Visible = false end
+                    end)
+                end
                 ring.Color = visible and Color3.fromRGB(245, 245, 250)
                     or Color3.fromRGB(110, 115, 130)
             end
             downPos = nil
         end
-    end))
+    end
+    track(pad.InputEnded:Connect(release))
     track(game:GetService("UserInputService").InputChanged:Connect(function(input)
         if downPos
             and (input.UserInputType == Enum.UserInputType.MouseMovement
@@ -609,129 +663,258 @@ local function buildUI()
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.Parent = parent
 
-    local main = Instance.new("Frame")
+    -- CanvasGroup = panel bisa fade utuh + collapse ter-clip rapi.
+    local main = Instance.new("CanvasGroup")
     main.Name = "Panel"
-    main.Size = UDim2.new(0, 230, 0, 304)
-    main.Position = UDim2.new(0, 16, 0, 120)
-    main.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
-    main.BorderColor3 = Color3.fromRGB(120, 120, 128)
-    main.BorderSizePixel = 1
-    main.Active = true
+    main.Position = UDim2.new(0, 16, 0, 110)
+    main.BackgroundColor3 = Color3.fromRGB(16, 18, 25)
+    main.BorderSizePixel = 0
+    main.ClipsDescendants = true
+    main.GroupTransparency = 1
     main.Parent = gui
+    round(main, 14)
+    stroke(main, Color3.fromRGB(72, 78, 100), 0.35)
+
+    local y = 0
+    -- Header: badge NS + judul + tombol minimize.
+    local head = Instance.new("TextButton")
+    head.Name = "Head"
+    head.Size = UDim2.new(1, 0, 0, 52)
+    head.Position = UDim2.new(0, 0, 0, 0)
+    head.BackgroundTransparency = 1
+    head.Text = ""
+    head.AutoButtonColor = false
+    head.Parent = main
+    y = 52
+
+    local badge = Instance.new("TextLabel")
+    badge.Size = UDim2.new(0, 30, 0, 30)
+    badge.Position = UDim2.new(0, 12, 0.5, -15)
+    badge.BackgroundColor3 = Color3.fromRGB(30, 34, 50)
+    badge.BorderSizePixel = 0
+    badge.Font = Enum.Font.Code
+    badge.TextSize = 12
+    badge.TextColor3 = ACCENT
+    badge.Text = "NS"
+    badge.Parent = head
+    round(badge, 9)
+    stroke(badge, ACCENT, 0.45)
 
     local title = Instance.new("TextLabel")
-    title.Name = "Title"
-    title.Size = UDim2.new(1, -34, 0, 30)
-    title.Position = UDim2.new(0, 0, 0, 0)
+    title.Size = UDim2.new(1, -92, 0, 20)
+    title.Position = UDim2.new(0, 50, 0, 7)
     title.BackgroundTransparency = 1
     title.Font = Enum.Font.Code
-    title.TextSize = 13
+    title.TextSize = 14
     title.TextXAlignment = Enum.TextXAlignment.Left
-    title.TextColor3 = Color3.fromRGB(235, 235, 240)
-    title.Text = "  NULLSHIGHT // MINE"
-    title.Parent = main
+    title.TextColor3 = INK
+    title.Text = "NULLSHIGHT"
+    title.Parent = head
+
+    local sub = Instance.new("TextLabel")
+    sub.Size = UDim2.new(1, -92, 0, 14)
+    sub.Position = UDim2.new(0, 50, 0, 28)
+    sub.BackgroundTransparency = 1
+    sub.Font = Enum.Font.Code
+    sub.TextSize = 10
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.TextColor3 = DIM
+    sub.Text = "MINE A MOUNTAIN v0.2.0"
+    sub.Parent = head
 
     local mini = Instance.new("TextButton")
     mini.Size = UDim2.new(0, 30, 0, 30)
-    mini.Position = UDim2.new(1, -30, 0, 0)
-    mini.BackgroundTransparency = 1
+    mini.Position = UDim2.new(1, -40, 0.5, -15)
+    mini.BackgroundColor3 = CARD
+    mini.BorderSizePixel = 0
     mini.Font = Enum.Font.Code
-    mini.TextSize = 14
-    mini.TextColor3 = Color3.fromRGB(160, 160, 170)
-    mini.Text = "_"
-    mini.Parent = main
+    mini.TextSize = 16
+    mini.TextColor3 = DIM
+    mini.Text = "-"
+    mini.AutoButtonColor = false
+    mini.Parent = head
+    round(mini, 9)
+    stroke(mini, Color3.fromRGB(55, 60, 78), 0.55)
 
     local body = Instance.new("Frame")
     body.Name = "Body"
-    body.Size = UDim2.new(1, 0, 1, -30)
-    body.Position = UDim2.new(0, 0, 0, 30)
+    body.Size = UDim2.new(1, 0, 0, 500)
+    body.Position = UDim2.new(0, 0, 0, y)
     body.BackgroundTransparency = 1
     body.Parent = main
 
-    local collapsed = false
-    track(mini.MouseButton1Click:Connect(function()
-        collapsed = not collapsed
-        body.Visible = not collapsed
-        main.Size = collapsed and UDim2.new(0, 230, 0, 30)
-            or UDim2.new(0, 230, 0, 304)
-        mini.Text = collapsed and "+" or "_"
+    -- Drag header dengan lerp biar meluncur, bukan patah-patah.
+    -- lastPos diupdate dari semua input biar akurat di touch maupun mouse.
+    local dragging, grabOff, lastPos = false, nil, nil
+    track(game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            lastPos = input.Position
+        end
     end))
-
-    local dragging, dragStart, startPos = false, nil, nil
-    track(title.InputBegan:Connect(function(input)
+    track(head.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
-            dragStart = input.Position
-            startPos = main.Position
+            lastPos = input.Position
+            grabOff = input.Position - main.AbsolutePosition
         end
     end))
-    track(title.InputEnded:Connect(function(input)
+    track(head.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
         end
     end))
-    track(game:GetService("UserInputService").InputChanged:Connect(function(input)
-        if dragging
-            and (input.UserInputType == Enum.UserInputType.MouseMovement
-                or input.UserInputType == Enum.UserInputType.Touch) then
-            local d = input.Position - dragStart
-            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+    track(game:GetService("RunService").RenderStepped:Connect(function()
+        if not alive then return end
+        if dragging and grabOff and lastPos then
+            local guiOff = gui.AbsolutePosition
+            local want = UDim2.new(0,
+                lastPos.X - guiOff.X - grabOff.X, 0,
+                lastPos.Y - guiOff.Y - grabOff.Y)
+            local cur = main.Position
+            main.Position = UDim2.new(cur.X.Scale,
+                cur.X.Offset + (want.X.Offset - cur.X.Offset) * 0.45,
+                cur.Y.Scale,
+                cur.Y.Offset + (want.Y.Offset - cur.Y.Offset) * 0.45)
         end
     end))
 
-    local y = 6
-    local function row(labelText, initial, cb)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -16, 0, 30)
-        btn.Position = UDim2.new(0, 8, 0, y)
-        btn.BackgroundColor3 = Color3.fromRGB(28, 30, 38)
-        btn.BorderColor3 = Color3.fromRGB(90, 90, 100)
-        btn.BorderSizePixel = 1
-        btn.Font = Enum.Font.Code
-        btn.TextSize = 12
-        btn.TextColor3 = Color3.fromRGB(235, 235, 240)
-        btn.AutoButtonColor = true
-        local on = initial
-        local function paint()
-            btn.Text = (on and "[ ON ]  " or "[ OFF ] ") .. labelText
-        end
-        paint()
-        track(btn.MouseButton1Click:Connect(function()
-            on = not on
-            paint()
-            cb(on)
-        end))
-        btn.Parent = body
-        y = y + 36
+    local by = 0
+    local function section(text)
+        local t = Instance.new("TextLabel")
+        t.Size = UDim2.new(1, -32, 0, 18)
+        t.Position = UDim2.new(0, 16, 0, by)
+        t.BackgroundTransparency = 1
+        t.Font = Enum.Font.Code
+        t.TextSize = 10
+        t.TextXAlignment = Enum.TextXAlignment.Left
+        t.TextColor3 = DIM
+        t.Text = text
+        t.Parent = body
+        by = by + 22
     end
 
-    row("Auto Mine", state.autoMine, function(v) state.autoMine = v end)
-    row("Auto Collect", state.autoCollect, function(v) state.autoCollect = v end)
-    row("Auto Sell", state.autoSell, function(v) state.autoSell = v end)
-    row("Ore ESP", state.oreESP, function(v)
+    local function toggleRow(labelText, initial, cb)
+        local card = Instance.new("TextButton")
+        card.Size = UDim2.new(1, -24, 0, 42)
+        card.Position = UDim2.new(0, 12, 0, by)
+        card.BackgroundColor3 = CARD
+        card.BorderSizePixel = 0
+        card.Text = ""
+        card.AutoButtonColor = false
+        card.Parent = body
+        round(card, 10)
+        stroke(card, Color3.fromRGB(55, 60, 78), 0.55)
+
+        local lb = Instance.new("TextLabel")
+        lb.Size = UDim2.new(1, -72, 1, 0)
+        lb.Position = UDim2.new(0, 12, 0, 0)
+        lb.BackgroundTransparency = 1
+        lb.Font = Enum.Font.Code
+        lb.TextSize = 12
+        lb.TextXAlignment = Enum.TextXAlignment.Left
+        lb.TextColor3 = INK
+        lb.Text = labelText
+        lb.Parent = card
+
+        local sw = Instance.new("Frame")
+        sw.Size = UDim2.new(0, 46, 0, 26)
+        sw.AnchorPoint = Vector2.new(1, 0.5)
+        sw.Position = UDim2.new(1, -12, 0.5, 0)
+        sw.BorderSizePixel = 0
+        sw.Parent = card
+        round(sw, 13)
+
+        local knob = Instance.new("Frame")
+        knob.Size = UDim2.new(0, 20, 0, 20)
+        knob.AnchorPoint = Vector2.new(0, 0.5)
+        knob.Position = UDim2.new(0, 3, 0.5, 0)
+        knob.BackgroundColor3 = Color3.fromRGB(245, 245, 250)
+        knob.BorderSizePixel = 0
+        knob.Parent = sw
+        round(knob, 10)
+
+        local on = initial
+        local function paint(animate)
+            local swC = on and ACCENT or Color3.fromRGB(48, 52, 68)
+            local kx = on and UDim2.new(1, -23, 0.5, 0)
+                or UDim2.new(0, 3, 0.5, 0)
+            if animate then
+                tw(sw, { BackgroundColor3 = swC }, 0.2)
+                tw(knob, { Position = kx }, 0.22,
+                    Enum.EasingStyle.Back)
+            else
+                sw.BackgroundColor3 = swC
+                knob.Position = kx
+            end
+        end
+        paint(false)
+        track(card.MouseButton1Click:Connect(function()
+            on = not on
+            paint(true)
+            cb(on)
+        end))
+        by = by + 48
+    end
+
+    local function actionBtn(labelText, cb, danger)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, -24, 0, 38)
+        btn.Position = UDim2.new(0, 12, 0, by)
+        btn.BackgroundColor3 = danger and Color3.fromRGB(52, 24, 26)
+            or CARD2
+        btn.BorderSizePixel = 0
+        btn.Font = Enum.Font.Code
+        btn.TextSize = 12
+        btn.TextColor3 = danger and Color3.fromRGB(255, 175, 175) or INK
+        btn.Text = labelText
+        btn.AutoButtonColor = false
+        btn.Parent = body
+        round(btn, 10)
+        if danger then
+            stroke(btn, Color3.fromRGB(170, 80, 85), 0.4)
+        else
+            stroke(btn, Color3.fromRGB(70, 76, 100), 0.5)
+        end
+        local base = btn.BackgroundColor3
+        local dark = Color3.new(
+            math.max(base.R - 0.06, 0),
+            math.max(base.G - 0.06, 0),
+            math.max(base.B - 0.06, 0))
+        track(btn.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                tw(btn, { BackgroundColor3 = dark }, 0.1)
+            end
+        end))
+        track(btn.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                tw(btn, { BackgroundColor3 = base }, 0.15)
+            end
+        end))
+        track(btn.MouseButton1Click:Connect(function() cb() end))
+        by = by + 44
+    end
+
+    section("  FARM")
+    toggleRow("Auto Mine", state.autoMine, function(v) state.autoMine = v end)
+    toggleRow("Auto Collect", state.autoCollect,
+        function(v) state.autoCollect = v end)
+    toggleRow("Auto Sell", state.autoSell, function(v) state.autoSell = v end)
+
+    section("  TAMPILAN")
+    toggleRow("Ore ESP", state.oreESP, function(v)
         state.oreESP = v
         if not v then clearESP() end
     end)
-    row("ESP Termurah", state.showLowest, function(v) state.showLowest = v end)
+    toggleRow("ESP Termurah", state.showLowest,
+        function(v) state.showLowest = v end)
 
-    local lagBtn = Instance.new("TextButton")
-    lagBtn.Size = UDim2.new(1, -16, 0, 30)
-    lagBtn.Position = UDim2.new(0, 8, 0, y)
-    lagBtn.BackgroundColor3 = Color3.fromRGB(28, 30, 38)
-    lagBtn.BorderColor3 = Color3.fromRGB(90, 90, 100)
-    lagBtn.BorderSizePixel = 1
-    lagBtn.Font = Enum.Font.Code
-    lagBtn.TextSize = 12
-    lagBtn.TextColor3 = Color3.fromRGB(235, 235, 240)
-    lagBtn.Text = "FIX LAG"
-    lagBtn.Parent = body
-    y = y + 36
-    track(lagBtn.MouseButton1Click:Connect(function()
-        -- Sapu visual berat + ringankan beban skrip. Permanen sampai
-        -- skrip di-reload ulang (run loadstring lagi).
+    section("  SISTEM")
+    actionBtn("FIX LAG", function()
         pcall(fpsBoost)
         CONFIG.EspMax = 15
         CONFIG.EspRefresh = 4
@@ -740,41 +923,35 @@ local function buildUI()
         CONFIG.Burst = 2
         clearESP()
         note("Lag fix applied")
-    end))
-
-    local sellBtn = Instance.new("TextButton")
-    sellBtn.Size = UDim2.new(1, -16, 0, 30)
-    sellBtn.Position = UDim2.new(0, 8, 0, y)
-    sellBtn.BackgroundColor3 = Color3.fromRGB(28, 30, 38)
-    sellBtn.BorderColor3 = Color3.fromRGB(90, 90, 100)
-    sellBtn.BorderSizePixel = 1
-    sellBtn.Font = Enum.Font.Code
-    sellBtn.TextSize = 12
-    sellBtn.TextColor3 = Color3.fromRGB(235, 235, 240)
-    sellBtn.Text = "SELL NOW"
-    sellBtn.Parent = body
-    y = y + 36
-    track(sellBtn.MouseButton1Click:Connect(function()
+    end)
+    actionBtn("SELL NOW", function()
         doSell()
         note("Selling...")
+    end)
+    actionBtn("UNLOAD SCRIPT", function() unload() end, true)
+
+    local fullH = y + by + 12
+    body.Size = UDim2.new(1, 0, 0, by)
+    main.Size = UDim2.new(0, 252, 0, fullH)
+
+    local collapsed = false
+    track(mini.MouseButton1Click:Connect(function()
+        collapsed = not collapsed
+        mini.Text = collapsed and "+" or "-"
+        tw(main, { Size = collapsed and UDim2.new(0, 252, 0, 52)
+            or UDim2.new(0, 252, 0, fullH) }, 0.3,
+            Enum.EasingStyle.Quart)
     end))
 
-    local killBtn = Instance.new("TextButton")
-    killBtn.Size = UDim2.new(1, -16, 0, 30)
-    killBtn.Position = UDim2.new(0, 8, 0, y)
-    killBtn.BackgroundColor3 = Color3.fromRGB(64, 20, 20)
-    killBtn.BorderColor3 = Color3.fromRGB(200, 90, 90)
-    killBtn.BorderSizePixel = 1
-    killBtn.Font = Enum.Font.Code
-    killBtn.TextSize = 12
-    killBtn.TextColor3 = Color3.fromRGB(255, 180, 180)
-    killBtn.Text = "UNLOAD SCRIPT"
-    killBtn.Parent = body
-    killBtn.MouseButton1Click:Connect(function()
-        unload()
-    end)
-
     buildEmblem(gui, main)
+
+    -- Intro: panel melayang naik + fade in.
+    local endPos = main.Position
+    main.Position = UDim2.new(endPos.X.Scale, endPos.X.Offset,
+        endPos.Y.Scale, endPos.Y.Offset + 24)
+    main.Visible = true
+    tw(main, { GroupTransparency = 0 }, 0.3)
+    tw(main, { Position = endPos }, 0.35, Enum.EasingStyle.Back)
     return true
 end
 
