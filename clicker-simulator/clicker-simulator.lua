@@ -1,4 +1,4 @@
--- NullShight Clicker Tap // v0.1.0
+-- NullShight Clicker Tap // v0.1.1
 -- Universal tap-based auto clicker: injects synthetic screen taps through
 -- VirtualInputManager, so it works even when remotes are unnamed/hidden.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -12,6 +12,7 @@ local CONFIG = {
     TapDelay = 0.1,          -- seconds between taps
     TapX = 0.5,              -- 0-1 horizontal (0.5 = center)
     TapY = 0.5,              -- 0-1 vertical (0.5 = center)
+    TapPause = 3,            -- yield seconds after a REAL finger touch
     Burst = 50,              -- TAP x50 burst count
     ClickRemote = nil,       -- optional remote mode: dotted path
     ClickArgs = {},
@@ -160,10 +161,20 @@ local function fireMapped(path, args)
     end)
 end
 
--- Tap loop: synthetic input, independent from everything else.
+-- Tap loop yields to real fingers: any genuine Touch input pauses
+-- synthetic taps for TapPause seconds, so you can always move around
+-- and reach the toggle. (Synthetic taps are MouseButton1, never Touch,
+-- so the tapper can never pause itself.)
+local lastTouch = 0
+track(game:GetService("UserInputService").InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch then
+        lastTouch = os.clock()
+    end
+end))
+
 task.spawn(function()
     while alive and _G.NSCT_Gen == myGen do
-        if state.autoTap then
+        if state.autoTap and os.clock() - lastTouch > CONFIG.TapPause then
             pcall(sendTap)
         end
         if CONFIG.TapDelay > 0 then
@@ -384,7 +395,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "CLICKER TAP v0.1.0"
+    sub.Text = "CLICKER TAP v0.1.1"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
