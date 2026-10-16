@@ -1,4 +1,4 @@
--- NullShight Build the Pyramid // v0.2.0
+-- NullShight Build the Pyramid // v0.3.0
 -- Game: Build the Pyramid! (123720558354386). Haul loop: grab blocks at the
 -- quarry, carry them to the pyramid, train speed/strength on the side.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -29,6 +29,24 @@ local CONFIG = {
     AFKService = "AFKService",
     AFKRemote = "Activity",              -- RE heartbeat, mapped 2026-10-16
     AFKDelay = 60,
+    AutoFarm = false,      -- master loop: travel + pickup + slot place
+    FarmDelay = 2,
+    UpgradeService = "DataService",
+    UpgradeRemote = "PurchaseUpgrade",   -- RF, arg: upgradeId
+    AutoUpgrade = false,
+    UpgradeDelay = 5,
+    GiftService = "FreeGiftService",
+    GiftStateRemote = "GetState",        -- RF
+    GiftStepRemote = "MarkStep",         -- RF, arg: "liked"/"favorited"
+    GiftClaimRemote = "Claim",           -- RF
+    AutoGift = true,
+    GiftDelay = 60,
+    CodesService = "CodesService",
+    CodesRemote = "Redeem",              -- RF, arg: code string
+    ExtraCodes = { "SUNGOD", "SORRYFORUPDATEBUG", "FREECODE", "WELCOME",
+        "DEADBYMELOL", "UPDATE15", "PYRAMID1500" },
+    WalkSpeed = 60,
+    WalkNormal = 16,
     AutoPickup = true,
     PickupDelay = 1.5,
     AutoDeliver = true,                  -- prompt fallback near the player
@@ -51,6 +69,11 @@ local state = {
     autoDeliver = CONFIG.AutoDeliver,
     autoTrainSpeed = CONFIG.AutoTrainSpeed,
     autoTrainStrength = CONFIG.AutoTrainStrength,
+    autoFarm = CONFIG.AutoFarm,
+    autoUpgrade = CONFIG.AutoUpgrade,
+    autoGift = CONFIG.AutoGift,
+    walkSpeed = false,
+    noclip = false,
 }
 
 -- Generation guard: a fresh run kills the previous run's loops.
@@ -98,6 +121,19 @@ local function unload(quiet)
     state.autoTrainSpeed = false
     state.autoTrainStrength = false
     pcall(stopBench)
+    state.walkSpeed = false
+    state.noclip = false
+    pcall(setHumanoidSpeed, CONFIG.WalkNormal)
+    pcall(function()
+        local char = LocalPlayer.Character
+        if char then
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" then
+                    p.CanCollide = true
+                end
+            end
+        end
+    end)
     for _, c in ipairs(conns) do
         pcall(function() c:Disconnect() end)
     end
@@ -231,6 +267,129 @@ local function stopBench()
     if r then pcall(function() r:InvokeServer() end) end
 end
 
+-- Shared modules (client-readable, like the public hubs require them).
+local sharedCache = {}
+local function sharedMod(...)
+    local steps = { ... }
+    local key = table.concat(steps, "/")
+    if sharedCache[key] ~= nil then return sharedCache[key] end
+    local node = nil
+    pcall(function()
+        node = ReplicatedStorage:WaitForChild("Shared", 5)
+        for _, step in ipairs(steps) do
+            node = node and node:WaitForChild(step, 5)
+        end
+        if node then node = require(node) end
+    end)
+    if type(node) ~= "table" then node = false end
+    sharedCache[key] = node
+    return node
+end
+
+local function readCarry()
+    local mod = sharedMod("Books", "CarryState")
+    if not mod then return nil end
+    local ok, st = pcall(mod.read, LocalPlayer)
+    if ok and type(st) == "table" then return tonumber(st.count) end
+    return nil
+end
+
+local function readCapacity()
+    local cfg = sharedMod("Config", "CarryConfig")
+    local base = 20
+    if cfg then base = tonumber(cfg.Capacity) or base end
+    local ok, lv = pcall(LocalPlayer.GetAttribute, LocalPlayer, "StrengthLevel")
+    if ok and tonumber(lv) then base = base + tonumber(lv) end
+    return base
+end
+
+local function runtimeMod()
+    return sharedMod("Placement", "PyramidRuntime")
+end
+
+local function resolveSlot(origin)
+    local rt = runtimeMod()
+    if not rt or type(rt.resolveNearestSlot) ~= "function" then
+        return nil
+    end
+    local ok, slot = pcall(rt.resolveNearestSlot, origin, workspace,
+        function() return false end, {})
+    if ok and type(slot) == "table" and slot.layer then return slot end
+    return nil
+end
+
+local function teleportTo(pos)
+    local root = getRoot()
+    if not root or not pos then return end
+    local cf = root.CFrame
+    root.CFrame = CFrame.new(pos) * (cf - cf.Position)
+end
+
+local function quarryTop()
+    local region = findRegion(CONFIG.PickupRegion)
+    if region and region:IsA("BasePart") then
+        return region.Position + Vector3.new(0, region.Size.Y / 2 + 3, 0)
+    end
+    return nil
+end
+
+local function upgradeIds()
+    local cat = sharedMod("Config", "UpgradeCatalog")
+    local ids = {}
+    if cat and type(cat.Upgrades) == "table" then
+        for _, u in ipairs(cat.Upgrades) do
+            if type(u) == "table" and u.Id then
+                ids[#ids + 1] = u.Id
+            end
+        end
+    end
+    return ids
+end
+
+local function knownCodes()
+    local out, seen = {}, {}
+    local cat = sharedMod("Config", "CodesConfig")
+    if cat and type(cat.Codes) == "table" then
+        for code, _ in pairs(cat.Codes) do
+            if type(code) == "string" and not seen[code] then
+                seen[code] = true
+                out[#out + 1] = code
+            end
+        end
+    end
+    for _, code in ipairs(CONFIG.ExtraCodes) do
+        if not seen[code] then
+            seen[code] = true
+            out[#out + 1] = code
+        end
+    end
+    return out
+end
+
+local codesRunning = false
+local function redeemAll()
+    if codesRunning then return end
+    codesRunning = true
+    task.spawn(function()
+        local n = 0
+        for _, code in ipairs(knownCodes()) do
+            if not alive or _G.NSBP_Gen ~= myGen then break end
+            local r = knitRemote(CONFIG.CodesService, "RF", CONFIG.CodesRemote)
+            if r then
+                local ok, reply = pcall(function()
+                    return r:InvokeServer(code)
+                end)
+                if ok and type(reply) == "table" and reply.ok then
+                    n = n + 1
+                end
+            end
+            task.wait(1.1)
+        end
+        note("Codes redeemed: " .. tostring(n))
+        codesRunning = false
+    end)
+end
+
 local function findRegion(path)
     if not path or path == "" then return nil end
     local node = workspace
@@ -326,6 +485,50 @@ local function pickStation(listKey, multKey, manual, modelKey, partKey, lock, lo
     return nil, nil
 end
 
+-- Master farm loop: haul to quarry while hands free, then travel to
+-- the nearest free pyramid slot and place. Slot math comes from the
+-- game's own PyramidRuntime module.
+task.spawn(function()
+    while alive and _G.NSBP_Gen == myGen do
+        if state.autoFarm then
+            pcall(function()
+                local carried = readCarry() or 0
+                if carried < readCapacity() then
+                    local top = quarryTop()
+                    local root = getRoot()
+                    if top and root and
+                        (root.Position - top).Magnitude > 20 then
+                        teleportTo(top)
+                        task.wait(0.5)
+                    end
+                    local region = findRegion(CONFIG.PickupRegion)
+                    if region then
+                        fireKnit(CONFIG.BlockService, "RF",
+                            CONFIG.PickupRemote, { region })
+                    end
+                else
+                    local root = getRoot()
+                    local slot = root and resolveSlot(root.Position) or nil
+                    if slot then
+                        if (root.Position - slot.position).Magnitude > 12 then
+                            teleportTo(slot.position)
+                            task.wait(0.5)
+                        end
+                        fireKnit(CONFIG.DeliverService, "RF",
+                            CONFIG.DeliverRemote,
+                            { slot.layer, slot.slotIndex,
+                                slot.generation, {} })
+                    elseif CONFIG.DeliverArgs then
+                        fireKnit(CONFIG.DeliverService, "RF",
+                            CONFIG.DeliverRemote, CONFIG.DeliverArgs)
+                    end
+                end
+            end)
+        end
+        task.wait(CONFIG.FarmDelay)
+    end
+end)
+
 task.spawn(function()
     while alive and _G.NSBP_Gen == myGen do
         if state.autoTrainStrength then
@@ -386,6 +589,105 @@ task.spawn(function()
     end
 end)
 
+-- AutoUpgrade: rotate the catalog, buy what the server accepts.
+-- Server enforces funds; refused ids rest for 5 minutes.
+task.spawn(function()
+    local idx = 1
+    local banned = {}
+    while alive and _G.NSBP_Gen == myGen do
+        if state.autoUpgrade then
+            pcall(function()
+                local ids = upgradeIds()
+                if #ids == 0 then return end
+                if idx > #ids then idx = 1 end
+                local id = ids[idx]
+                idx = idx + 1
+                if banned[id] and os.clock() - banned[id] < 300 then return end
+                local r = knitRemote(CONFIG.UpgradeService, "RF",
+                    CONFIG.UpgradeRemote)
+                if not r then return end
+                local ok, reply = pcall(function()
+                    return r:InvokeServer(id)
+                end)
+                if ok and type(reply) == "table" and reply.ok then
+                    note("Upgrade bought: " .. tostring(id))
+                else
+                    banned[id] = os.clock()
+                end
+            end)
+        end
+        task.wait(CONFIG.UpgradeDelay)
+    end
+end)
+
+-- AutoGift: steps then claim, checked every minute.
+task.spawn(function()
+    while alive and _G.NSBP_Gen == myGen do
+        if state.autoGift then
+            pcall(function()
+                local st = knitRemote(CONFIG.GiftService, "RF",
+                    CONFIG.GiftStateRemote)
+                if not st then return end
+                local ok, gs = pcall(function() return st:InvokeServer() end)
+                if not ok or type(gs) ~= "table" or gs.claimed then return end
+                for _, step in ipairs({ "liked", "favorited" }) do
+                    if not gs[step] then
+                        local ms = knitRemote(CONFIG.GiftService, "RF",
+                            CONFIG.GiftStepRemote)
+                        if ms then pcall(function()
+                            ms:InvokeServer(step)
+                        end) end
+                    end
+                end
+                local cl = knitRemote(CONFIG.GiftService, "RF",
+                    CONFIG.GiftClaimRemote)
+                if cl then
+                    local ok2, rep = pcall(function()
+                        return cl:InvokeServer()
+                    end)
+                    if ok2 and (rep == true or
+                        (type(rep) == "table" and rep.ok)) then
+                        note("Free gift claimed")
+                    end
+                end
+            end)
+        end
+        task.wait(CONFIG.GiftDelay)
+    end
+end)
+
+-- WalkSpeed + noclip enforcement.
+local function setHumanoidSpeed(v)
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then pcall(function() hum.WalkSpeed = v end) end
+end
+
+task.spawn(function()
+    while alive and _G.NSBP_Gen == myGen do
+        if state.walkSpeed then
+            pcall(setHumanoidSpeed, CONFIG.WalkSpeed)
+        end
+        task.wait(0.5)
+    end
+end)
+
+task.spawn(function()
+    while alive and _G.NSBP_Gen == myGen do
+        if state.noclip then
+            pcall(function()
+                local char = LocalPlayer.Character
+                if char then
+                    for _, p in ipairs(char:GetDescendants()) do
+                        if p:IsA("BasePart") then p.CanCollide = false end
+                    end
+                end
+            end)
+        end
+        task.wait(0.3)
+    end
+end)
+
 -- Native anti-AFK: fire the game's own heartbeat (cleaner than input sim).
 task.spawn(function()
     while alive and _G.NSBP_Gen == myGen do
@@ -396,6 +698,12 @@ end)
 
 note("NullShight Pyramid loaded. AutoPickup " ..
     (state.autoPickup and "ON" or "OFF"))
+
+-- Free codes once per run (server dedupes, costs nothing).
+task.spawn(function()
+    task.wait(5)
+    if alive and _G.NSBP_Gen == myGen then redeemAll() end
+end)
 
 task.spawn(function()
     task.wait(2)
@@ -628,7 +936,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "BUILD THE PYRAMID v0.2.0"
+    sub.Text = "BUILD THE PYRAMID v0.3.0"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -711,6 +1019,7 @@ local function buildUI()
     local tabDefs = {
         { id = "haul", label = "HAUL" },
         { id = "train", label = "TRAIN" },
+        { id = "more", label = "MORE" },
         { id = "sys", label = "SYS" },
     }
     local pages = {}
@@ -885,7 +1194,9 @@ local function buildUI()
 
     -- HAUL: 2x2 grid. TRAIN: placeholders until mapped. SYS: Fix + unload.
     local haul = pages.haul
-    toggleCell(haul, 0, 0, "Auto Pickup", state.autoPickup,
+    toggleCell(haul, 0, 0, "Auto Farm", state.autoFarm,
+        function(v) state.autoFarm = v end)
+    toggleCell(haul, 1, 0, "Auto Pickup", state.autoPickup,
         function(v)
             state.autoPickup = v
             if v then
@@ -896,9 +1207,9 @@ local function buildUI()
                 end
             end
         end)
-    toggleCell(haul, 1, 0, "Auto Deliver", state.autoDeliver,
+    toggleCell(haul, 0, 1, "Auto Deliver", state.autoDeliver,
         function(v) state.autoDeliver = v end)
-    wideBtn(haul, 1, "PICKUP x5 BURST", function()
+    wideBtn(haul, 2, "PICKUP x5 BURST", function()
         local region = findRegion(CONFIG.PickupRegion)
         if not region then
             note("Quarry region not found")
@@ -921,6 +1232,20 @@ local function buildUI()
             state.autoTrainStrength = v
             if not v then stopBench() end
         end)
+
+    local more = pages.more
+    toggleCell(more, 0, 0, "Auto Upgrade", state.autoUpgrade,
+        function(v) state.autoUpgrade = v end)
+    toggleCell(more, 1, 0, "Auto Gift", state.autoGift,
+        function(v) state.autoGift = v end)
+    toggleCell(more, 0, 1, "Walk Speed", state.walkSpeed,
+        function(v)
+            state.walkSpeed = v
+            if not v then pcall(setHumanoidSpeed, CONFIG.WalkNormal) end
+        end)
+    toggleCell(more, 1, 1, "Noclip", state.noclip,
+        function(v) state.noclip = v end)
+    wideBtn(more, 2, "REDEEM CODES", function() redeemAll() end)
 
     local sys = pages.sys
     wideBtn(sys, 0, "FIX LAG", function()
