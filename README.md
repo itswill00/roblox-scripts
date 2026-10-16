@@ -83,3 +83,15 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scri
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/build-a-pyramid/build-a-pyramid.lua"))()
 ```
+
+## Sword Loot Monarch (`sword-loot-monarch/`)
+
+`sword-loot-monarch.lua` — v0.1.0, full English:
+
+- Auto Click (`Remotes.MainEvent` + click args), CLICK x50 burst.
+- FARM tab ready: Train / Stage / Rebirth / Collect (honest: warn until mapped).
+- Landscape tabs + grab-anywhere + UNLOAD.
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/sword-loot-monarch/sword-loot-monarch.lua"))()
+```
