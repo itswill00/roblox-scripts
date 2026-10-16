@@ -21,3 +21,26 @@ folder: skrip + catatan mapping versi game.
    ulangi langkah 2–3 — cuma 3 baris itu yang rawan jebol.
 
 Kirim hasil mapping (nama remote) ke saya kalau mau saya yang finalize.
+
+## Cara pakai (loadstring, tanpa copy-paste)
+
+Di Delta cukup run satu baris ini — tiap update skrip tinggal run ulang:
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/slice-a-dummy/slice-a-dummy.lua"))()
+```
+
+## Mine A Mountain (`mine-a-mountain/`)
+
+`mine-a-mountain.lua` — v0.1.0:
+
+- Auto-mine crystal/boulder terdekat (`DigRequest` + fallback ayun tool).
+- Auto-collect (prompt + hold-complete), auto-sell berkala + tombol SELL NOW.
+- Ore ESP (nama + value, cap 40 biar enteng), anti-AFK, FPS boost opsional.
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/mine-a-mountain/mine-a-mountain.lua"))()
+```
+
+Remote teramati dari skrip publik — kalau game update dan ada yang mati,
+mapping ulang via SimpleSpy, yang diganti cuma CONFIG.
