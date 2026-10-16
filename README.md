@@ -70,3 +70,16 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scri
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/remote-spy/remote-spy.lua"))()
 ```
+
+## Build the Pyramid (`build-a-pyramid/`)
+
+`build-a-pyramid.lua` — v0.1.0, Knit game (Services.<Svc>.RF):
+
+- Auto Pickup (`BlockService.RF.Pickup` + quarry region), PICKUP x5 button.
+- Auto Deliver (`PyramidService.RF.Place` + prompt fallback).
+- Train Speed/Strength toggles (honest: warn until remotes mapped).
+- Landscape tabs + grab-anywhere + UNLOAD, all English.
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/build-a-pyramid/build-a-pyramid.lua"))()
+```
