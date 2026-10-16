@@ -55,5 +55,18 @@ mapping ulang via SimpleSpy, yang diganti cuma CONFIG.
 - UI v2 + grab-anywhere drag + UNLOAD.
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/greedy-growers/greedy-growers.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/greedy-growers/gg.lua"))()
+```
+
+## NetLens RemoteSpy (`remote-spy/`)
+
+`remote-spy.lua` — v1.0.0, full English, landscape single page:
+
+- Single `__namecallmethod` hook (restored on unload), event-driven only.
+- Merges duplicate calls (xN), tap row to copy paste-ready snippet,
+  per-row blacklist, pause/clear/copy-all, merge + args-only toggles.
+- Capped buffer, truncated previews, discreet GUI names.
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/remote-spy/remote-spy.lua"))()
 ```
