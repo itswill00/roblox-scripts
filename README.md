@@ -95,3 +95,16 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scri
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/sword-loot-monarch/sword-loot-monarch.lua"))()
 ```
+
+## Clicker Tap (`clicker-simulator/`)
+
+`clicker-simulator.lua` — v0.1.0, full English. Remote-free auto clicker:
+synthetic screen taps via VirtualInputManager (works with unnamed remotes).
+
+- Auto Tap (configurable point), Turbo toggle, TAP x50 burst.
+- REMOTE tab ready for when the real remote gets mapped.
+- Landscape tabs + grab-anywhere + UNLOAD.
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/clicker-simulator/clicker-simulator.lua"))()
+```
