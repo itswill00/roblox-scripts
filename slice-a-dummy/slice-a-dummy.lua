@@ -7,6 +7,8 @@ local CONFIG = {
     -- RemoteEvent/RemoteFunction names, mapped per game update. Find them
     -- with Dex/SimpleSpy while swinging once, then paste here.
     SwingRemote = "SlashRemotes.SlashRequest", -- mapped 2026-10-16
+    SwingCompletedRemote = "SlashRemotes.SwingCompleted", -- FireServer(1)
+    SwingCompletedArgs = { 1 },
     RebirthRemote = nil,    -- e.g. "RebirthEvent"
     EggRemote = nil,        -- e.g. "HatchEgg"
     AutoSwing = true,
@@ -103,39 +105,26 @@ local function clickDummy()
     return ok
 end
 
--- SlashRequest mapped 2026-10-16: FireServer(dummyModel, 2).
--- SlashFinished mapped 2026-10-16: FireServer(true, 2).
--- The dummy model is resolved live; trailing args sent as observed.
-local slashPower = 2
-local swingRemote = findRemote(CONFIG.SwingRemote)
-local finishRemote = findRemote("SlashRemotes.SlashFinished")
-if CONFIG.SwingRemote and not swingRemote then
-    note("Swing remote not found, using tool/click fallback")
+-- Observed 2026-10-16: damage lands via SwingCompleted:FireServer(1).
+-- SlashRequest exists but the completed call is what counts, so the loop
+-- fires exactly the observed call and nothing fancier.
+local doneRemote = findRemote(CONFIG.SwingCompletedRemote)
+local doneArgs = CONFIG.SwingCompletedArgs or { 1 }
+if CONFIG.SwingCompletedRemote and not doneRemote then
+    note("SwingCompleted remote not found, using tool/click fallback")
 end
 local function fireSlash()
-    if not swingRemote then return false end
-    local folder = workspace:FindFirstChild("DummyFolder")
-    if not folder then return false end
-    local dummy = folder:FindFirstChild("DummyModel") or
-        folder:FindFirstChildOfClass("Model")
-    if not dummy then return false end
-    local ok = pcall(function()
-        if swingRemote:IsA("RemoteEvent") then
-            swingRemote:FireServer(dummy, slashPower)
-        else
-            swingRemote:InvokeServer(dummy, slashPower)
-        end
-    end)
-    if ok and finishRemote then
-        pcall(function()
-            if finishRemote:IsA("RemoteEvent") then
-                finishRemote:FireServer(true, slashPower)
+    if doneRemote then
+        local ok = pcall(function()
+            if doneRemote:IsA("RemoteEvent") then
+                doneRemote:FireServer(unpack(doneArgs))
             else
-                finishRemote:InvokeServer(true, slashPower)
+                doneRemote:InvokeServer(unpack(doneArgs))
             end
         end)
+        if ok then return true end
     end
-    return ok
+    return false
 end
 
 local state = {
