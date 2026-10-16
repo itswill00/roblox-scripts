@@ -1,4 +1,4 @@
--- NullShight Mine A Mountain // v0.2.0
+-- NullShight Mine A Mountain // v0.2.1
 -- Game: Mine a Mountain (125927821145949). Nambah batu/diamond otomatis:
 -- auto-mine crystal terdekat + auto-sell berkala + ESP.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -76,9 +76,18 @@ local function track(c)
 end
 do
     pcall(function()
-        local root = (gethui and gethui()) or game:GetService("CoreGui")
-        local old = root:FindFirstChild("NullShightMine")
-        if old then old:Destroy() end
+        local roots = {}
+        local ok, h = pcall(function() return gethui and gethui() end)
+        if ok and h then roots[#roots + 1] = h end
+        roots[#roots + 1] = game:GetService("CoreGui")
+        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if pg then roots[#roots + 1] = pg end
+        for _, r in ipairs(roots) do
+            for _, n in ipairs({ "NullShightMine", "NullShightMineESP", "EmblemPad" }) do
+                local o = r:FindFirstChild(n)
+                if o then pcall(function() o:Destroy() end) end
+            end
+        end
     end)
 end
 
@@ -635,17 +644,26 @@ local function buildEmblem(parent, panel)
         end
     end
     track(pad.InputEnded:Connect(release))
+    -- Drag 1:1 ngikutin jari (direct-follow, paling andal di touch).
     track(game:GetService("UserInputService").InputChanged:Connect(function(input)
         if downPos
             and (input.UserInputType == Enum.UserInputType.MouseMovement
                 or input.UserInputType == Enum.UserInputType.Touch) then
             local d = input.Position - downPos
-            if d.Magnitude > 10 then moved = true end
+            if d.Magnitude > 8 then moved = true end
             if moved then
                 pad.Position = UDim2.new(startPos.X.Scale,
                     startPos.X.Offset + d.X, startPos.Y.Scale,
                     startPos.Y.Offset + d.Y)
             end
+        end
+    end))
+    -- Backup: kalau InputEnded di emblem ke-skip (overlay executor dsb),
+    -- sentuhan global tetap melepas drag biar nggak nyangkut.
+    track(game:GetService("UserInputService").InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            downPos = nil
         end
     end))
 end
@@ -719,7 +737,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "MINE A MOUNTAIN v0.2.0"
+    sub.Text = "MINE A MOUNTAIN v0.2.1"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -743,41 +761,44 @@ local function buildUI()
     body.BackgroundTransparency = 1
     body.Parent = main
 
-    -- Drag header dengan lerp biar meluncur, bukan patah-patah.
-    -- lastPos diupdate dari semua input biar akurat di touch maupun mouse.
-    local dragging, grabOff, lastPos = false, nil, nil
-    track(game:GetService("UserInputService").InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch then
-            lastPos = input.Position
-        end
-    end))
+    -- Drag header 1:1 ngikutin jari + clamp biar panel nggak kabur layar.
+    local function clampPanel()
+        local cam = workspace.CurrentCamera
+        local vs = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+        local p = main.Position
+        local w = main.AbsoluteSize.X
+        local x = math.max(-w + 80, math.min(p.X.Offset, vs.X - 80))
+        local yy = math.max(0, math.min(p.Y.Offset, vs.Y - 60))
+        main.Position = UDim2.new(0, x, 0, yy)
+    end
+    local dragging, dragStart, startPos = false, nil, nil
     track(head.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
-            lastPos = input.Position
-            grabOff = input.Position - main.AbsolutePosition
+            dragStart = input.Position
+            startPos = main.Position
         end
     end))
-    track(head.InputEnded:Connect(function(input)
+    local function endDrag(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+            if dragging then
+                dragging = false
+                pcall(clampPanel)
+            end
         end
-    end))
-    track(game:GetService("RunService").RenderStepped:Connect(function()
-        if not alive then return end
-        if dragging and grabOff and lastPos then
-            local guiOff = gui.AbsolutePosition
-            local want = UDim2.new(0,
-                lastPos.X - guiOff.X - grabOff.X, 0,
-                lastPos.Y - guiOff.Y - grabOff.Y)
-            local cur = main.Position
-            main.Position = UDim2.new(cur.X.Scale,
-                cur.X.Offset + (want.X.Offset - cur.X.Offset) * 0.45,
-                cur.Y.Scale,
-                cur.Y.Offset + (want.Y.Offset - cur.Y.Offset) * 0.45)
+    end
+    track(head.InputEnded:Connect(endDrag))
+    track(game:GetService("UserInputService").InputEnded:Connect(endDrag))
+    track(game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if dragging
+            and (input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - dragStart
+            main.Position = UDim2.new(startPos.X.Scale,
+                startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y)
         end
     end))
 
