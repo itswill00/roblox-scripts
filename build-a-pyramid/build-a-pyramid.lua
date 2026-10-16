@@ -1,4 +1,4 @@
--- NullShight Build the Pyramid // v0.1.0
+-- NullShight Build the Pyramid // v0.1.1
 -- Game: Build the Pyramid! (123720558354386). Haul loop: grab blocks at the
 -- quarry, carry them to the pyramid, train speed/strength on the side.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -18,8 +18,11 @@ local CONFIG = {
     -- Observed args: {5, 4086, 7, {}}. IDs may vary per block: watch
     -- NetLens (merge OFF) while placing twice and update these.
     DeliverArgs = { 5, 4086, 7, {} },
-    TrainSpeedRemote = nil,              -- fill after mapping
-    TrainStrengthRemote = nil,           -- fill after mapping
+    TrainService = "GymService",
+    TrainSpeedRemote = nil,              -- e.g. treadmill: fill after mapping
+    TrainSpeedArgs = { "1" },
+    TrainStrengthRemote = "StartBench",  -- mapped 2026-10-16
+    TrainStrengthArgs = { "1" },         -- bench/machine id as string
     AutoPickup = true,
     PickupDelay = 1.5,
     AutoDeliver = true,                  -- prompt fallback near the player
@@ -247,12 +250,12 @@ end)
 task.spawn(function()
     while alive and _G.NSBP_Gen == myGen do
         if state.autoTrainSpeed and CONFIG.TrainSpeedRemote then
-            pcall(fireKnit, CONFIG.BlockService, "RF",
-                CONFIG.TrainSpeedRemote, {})
+            pcall(fireKnit, CONFIG.TrainService, "RF",
+                CONFIG.TrainSpeedRemote, CONFIG.TrainSpeedArgs)
         end
         if state.autoTrainStrength and CONFIG.TrainStrengthRemote then
-            pcall(fireKnit, CONFIG.BlockService, "RF",
-                CONFIG.TrainStrengthRemote, {})
+            pcall(fireKnit, CONFIG.TrainService, "RF",
+                CONFIG.TrainStrengthRemote, CONFIG.TrainStrengthArgs)
         end
         task.wait(CONFIG.TrainDelay)
     end
@@ -267,6 +270,7 @@ task.spawn(function()
     local want = {
         { CONFIG.BlockService, "RF", CONFIG.PickupRemote },
         { CONFIG.DeliverService, "RF", CONFIG.DeliverRemote },
+        { CONFIG.TrainService, "RF", CONFIG.TrainStrengthRemote },
     }
     local missing = {}
     for _, w in ipairs(want) do
@@ -480,7 +484,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "BUILD THE PYRAMID v0.1.0"
+    sub.Text = "BUILD THE PYRAMID v0.1.1"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -769,7 +773,7 @@ local function buildUI()
     toggleCell(train, 0, 0, "Train Speed", state.autoTrainSpeed,
         function(v)
             state.autoTrainSpeed = v
-            if v and not knitRemote(CONFIG.BlockService, "RF",
+            if v and not knitRemote(CONFIG.TrainService, "RF",
                 CONFIG.TrainSpeedRemote) then
                 note("Train Speed not mapped yet - use NetLens")
             end
@@ -777,7 +781,7 @@ local function buildUI()
     toggleCell(train, 1, 0, "Train Strength", state.autoTrainStrength,
         function(v)
             state.autoTrainStrength = v
-            if v and not knitRemote(CONFIG.BlockService, "RF",
+            if v and not knitRemote(CONFIG.TrainService, "RF",
                 CONFIG.TrainStrengthRemote) then
                 note("Train Strength not mapped yet - use NetLens")
             end
