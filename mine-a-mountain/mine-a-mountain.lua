@@ -1,4 +1,4 @@
--- NullShight Mine A Mountain // v0.2.1
+-- NullShight Mine A Mountain // v0.2.2
 -- Game: Mine a Mountain (125927821145949). Nambah batu/diamond otomatis:
 -- auto-mine crystal terdekat + auto-sell berkala + ESP.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -23,6 +23,7 @@ local CONFIG = {
     MineDelay = 0.25,      -- jeda antar burst
     Burst = 3,             -- FireServer per burst (hemat, tetap tembus)
     AutoCollect = true,    -- fire prompt + hold-complete di target
+    CollectDelay = 0.5,    -- jeda antar collect (loop mandiri)
     AutoSell = true,
     SellInterval = 120,    -- detik antar auto-sell
     OreESP = true,
@@ -298,27 +299,30 @@ local function fireDig(pos)
     return okAll
 end
 
--- Fallback: ayun tool + sentuh prompt di target.
-local function swingFallback(target)
-    local did = false
+-- Fallback mine: ayun tool doang, nggak nyentuh collect.
+local function swingTool()
     local pick = heldPick()
-    if pick then
-        did = pcall(function() pick:Activate() end) or did
-    end
-    if target and state.autoCollect then
-        pcall(function()
-            local prompt = target:FindFirstChildOfClass("ProximityPrompt")
-            if not prompt then
-                prompt = target:FindFirstChildWhichIsA("ProximityPrompt", true)
-            end
-            if prompt then
-                fireproximityprompt(prompt)
-                did = true
-            end
-        end)
-        if holdRemote and target:IsA("Model") then
-            if fireRemote(holdRemote, { target }) then did = true end
+    if not pick then return false end
+    return pcall(function() pick:Activate() end)
+end
+
+-- Collect mandiri: prompt + hold-complete di target. Dipanggil loop
+-- sendiri, jadi toggle Collect hidup/mati tanpa peduli toggle Mine.
+local function collectTarget(target)
+    if not target then return false end
+    local did = false
+    pcall(function()
+        local prompt = target:FindFirstChildOfClass("ProximityPrompt")
+        if not prompt then
+            prompt = target:FindFirstChildWhichIsA("ProximityPrompt", true)
         end
+        if prompt then
+            fireproximityprompt(prompt)
+            did = true
+        end
+    end)
+    if holdRemote and target:IsA("Model") then
+        if fireRemote(holdRemote, { target }) then did = true end
     end
     return did
 end
@@ -353,12 +357,19 @@ task.spawn(function()
             local pos = target and targetPos(target) or nil
             local fired = pos and fireDig(pos) or false
             if not fired then
-                swingFallback(target)
-            elseif target and state.autoCollect then
-                swingFallback(target)
+                swingTool()
             end
         end
         task.wait(CONFIG.MineDelay)
+    end
+end)
+
+task.spawn(function()
+    while alive do
+        if state.autoCollect then
+            pcall(collectTarget, findTarget())
+        end
+        task.wait(CONFIG.CollectDelay)
     end
 end)
 
@@ -737,7 +748,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "MINE A MOUNTAIN v0.2.1"
+    sub.Text = "MINE A MOUNTAIN v0.2.2"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -924,7 +935,10 @@ local function buildUI()
     toggleRow("Auto Mine", state.autoMine, function(v) state.autoMine = v end)
     toggleRow("Auto Collect", state.autoCollect,
         function(v) state.autoCollect = v end)
-    toggleRow("Auto Sell", state.autoSell, function(v) state.autoSell = v end)
+    toggleRow("Auto Sell", state.autoSell, function(v)
+        state.autoSell = v
+        if v then doSell() end
+    end)
 
     section("  TAMPILAN")
     toggleRow("Ore ESP", state.oreESP, function(v)
