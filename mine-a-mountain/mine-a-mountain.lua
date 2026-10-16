@@ -1,4 +1,4 @@
--- NullShight Mine A Mountain // v0.2.2
+-- NullShight Mine A Mountain // v0.2.3
 -- Game: Mine a Mountain (125927821145949). Nambah batu/diamond otomatis:
 -- auto-mine crystal terdekat + auto-sell berkala + ESP.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -748,7 +748,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "MINE A MOUNTAIN v0.2.2"
+    sub.Text = "MINE A MOUNTAIN v0.2.3"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -772,7 +772,9 @@ local function buildUI()
     body.BackgroundTransparency = 1
     body.Parent = main
 
-    -- Drag header 1:1 ngikutin jari + clamp biar panel nggak kabur layar.
+    -- Grab-anywhere: panel bisa digeser dari header, sela panel, bahkan
+    -- dari atas tombol. Tap (<10px) tetap dihitung tap, geser = drag.
+    -- Satu controller global biar nggak peduli jari mulai dari mana.
     local function clampPanel()
         local cam = workspace.CurrentCamera
         local vs = (cam and cam.ViewportSize) or Vector2.new(800, 600)
@@ -782,36 +784,51 @@ local function buildUI()
         local yy = math.max(0, math.min(p.Y.Offset, vs.Y - 60))
         main.Position = UDim2.new(0, x, 0, yy)
     end
-    local dragging, dragStart, startPos = false, nil, nil
-    track(head.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = main.Position
-        end
-    end))
-    local function endDrag(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            if dragging then
-                dragging = false
-                pcall(clampPanel)
-            end
-        end
+    local dragging, dragStart, startPos, moved = false, nil, nil, false
+    local function isTouch(input)
+        return input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch
+            or input.UserInputType == Enum.UserInputType.MouseMovement
     end
-    track(head.InputEnded:Connect(endDrag))
-    track(game:GetService("UserInputService").InputEnded:Connect(endDrag))
+    local function pressBegan(input)
+        if not isTouch(input) or dragging then return end
+        dragging = true
+        moved = false
+        dragStart = input.Position
+        startPos = main.Position
+    end
+    -- return true kalau ini tap murni (jari nggak geser).
+    local function pressEnded(input)
+        if not isTouch(input) then return false end
+        if not dragging then return false end
+        dragging = false
+        pcall(clampPanel)
+        return not moved
+    end
     track(game:GetService("UserInputService").InputChanged:Connect(function(input)
-        if dragging
-            and (input.UserInputType == Enum.UserInputType.MouseMovement
-                or input.UserInputType == Enum.UserInputType.Touch) then
-            local d = input.Position - dragStart
+        if not dragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        local d = input.Position - dragStart
+        if d.Magnitude > 10 then moved = true end
+        if moved then
             main.Position = UDim2.new(startPos.X.Scale,
                 startPos.X.Offset + d.X,
                 startPos.Y.Scale, startPos.Y.Offset + d.Y)
         end
     end))
+    -- Backup pelepas global: sentuhan yang lepas di luar kontrol mana pun.
+    track(game:GetService("UserInputService").InputEnded:Connect(function(input)
+        pressEnded(input)
+    end))
+    -- Header + sela-sela body ikut jadi handle drag.
+    body.Active = true
+    track(head.InputBegan:Connect(pressBegan))
+    track(head.InputEnded:Connect(pressEnded))
+    track(body.InputBegan:Connect(pressBegan))
+    track(body.InputEnded:Connect(pressEnded))
 
     local by = 0
     local function section(text)
@@ -883,10 +900,13 @@ local function buildUI()
             end
         end
         paint(false)
-        track(card.MouseButton1Click:Connect(function()
-            on = not on
-            paint(true)
-            cb(on)
+        track(card.InputBegan:Connect(pressBegan))
+        track(card.InputEnded:Connect(function(input)
+            if pressEnded(input) then
+                on = not on
+                paint(true)
+                cb(on)
+            end
         end))
         by = by + 48
     end
@@ -916,18 +936,15 @@ local function buildUI()
             math.max(base.G - 0.06, 0),
             math.max(base.B - 0.06, 0))
         track(btn.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                tw(btn, { BackgroundColor3 = dark }, 0.1)
-            end
+            if not isTouch(input) then return end
+            pressBegan(input)
+            tw(btn, { BackgroundColor3 = dark }, 0.1)
         end))
         track(btn.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch then
-                tw(btn, { BackgroundColor3 = base }, 0.15)
-            end
+            if not isTouch(input) then return end
+            tw(btn, { BackgroundColor3 = base }, 0.15)
+            if pressEnded(input) then cb() end
         end))
-        track(btn.MouseButton1Click:Connect(function() cb() end))
         by = by + 44
     end
 
