@@ -1,4 +1,4 @@
--- NullShight NetLens // v1.2.0 -- RemoteSpy
+-- NullShight NetLens // v1.2.1 -- RemoteSpy
 -- A precise, low-footprint network lens: logs RemoteEvent/RemoteFunction
 -- traffic, coalesces duplicates, and generates paste-ready call snippets.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -264,7 +264,7 @@ local seqNum = 0
 local function statsText()
     local n = 0
     for _ in pairs(remoteSet) do n = n + 1 end
-    return "NETLENS v1.2.0  |  " .. tostring(n) .. " remotes  |  " ..
+    return "NETLENS v1.2.1  |  " .. tostring(n) .. " remotes  |  " ..
         tostring(totalCalls) .. " calls  |  " .. hookInfo
 end
 
@@ -805,7 +805,7 @@ local function buildUI()
         return btn
     end
 
-    local bw = (PW - 24 - 24) / 4
+    local bw = (PW - 24 - 32) / 5
     toolBtn(0, bw, "PAUSE", function(btn)
         state.paused = not state.paused
         btn.Text = state.paused and "RESUME" or "PAUSE"
@@ -842,7 +842,7 @@ local function buildUI()
                 " logged=" .. tostring(totalCalls))
         end)
     end)
-    toolBtn(3 * (bw + 8), bw, "COPY ALL", function()
+    toolBtn(3 * (bw + 8), bw, "COPY", function()
         local lines = {}
         for _, e in ipairs(entries) do
             lines[#lines + 1] = "-- " .. rowText(e) .. "\n" .. e.snippet
@@ -855,6 +855,29 @@ local function buildUI()
             end
         end)
         note(ok and (#entries .. " snippets copied") or "Copy failed")
+    end)
+    toolBtn(4 * (bw + 8), bw, "EXPORT", function()
+        -- Writes the full log to a .txt via the executor filesystem
+        -- (Delta: /Delta/Workspace or the executor's workspace folder).
+        if type(writefile) ~= "function" then
+            note("Export not supported on this executor")
+            return
+        end
+        local lines = {}
+        lines[#lines + 1] = "-- NetLens export " .. os.date("%Y-%m-%d %X")
+        lines[#lines + 1] = "-- " .. statsText()
+        lines[#lines + 1] = ""
+        for _, e in ipairs(entries) do
+            lines[#lines + 1] = "-- " .. rowText(e)
+            lines[#lines + 1] = "-- caller: " .. e.preview
+            lines[#lines + 1] = e.snippet
+            lines[#lines + 1] = ""
+        end
+        local fname = "NetLens_" .. os.date("%Y%m%d_%H%M%S") .. ".txt"
+        local ok, err = pcall(writefile, fname, table.concat(lines, "\n"))
+        note(ok and ("Saved " .. fname .. " (" ..
+            tostring(#entries) .. " rows)") or
+            ("Export failed: " .. tostring(err)))
     end)
 
     local function miniToggle(x, w, label, initial, cb)
