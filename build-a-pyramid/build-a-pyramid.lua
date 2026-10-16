@@ -1,4 +1,4 @@
--- NullShight Build the Pyramid // v0.1.1
+-- NullShight Build the Pyramid // v0.1.2
 -- Game: Build the Pyramid! (123720558354386). Haul loop: grab blocks at the
 -- quarry, carry them to the pyramid, train speed/strength on the side.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -23,6 +23,9 @@ local CONFIG = {
     TrainSpeedArgs = { "1" },
     TrainStrengthRemote = "StartBench",  -- mapped 2026-10-16
     TrainStrengthArgs = { "1" },         -- bench/machine id as string
+    AFKService = "AFKService",
+    AFKRemote = "Activity",              -- RE heartbeat, mapped 2026-10-16
+    AFKDelay = 60,
     AutoPickup = true,
     PickupDelay = 1.5,
     AutoDeliver = true,                  -- prompt fallback near the player
@@ -261,6 +264,14 @@ task.spawn(function()
     end
 end)
 
+-- Native anti-AFK: fire the game's own heartbeat (cleaner than input sim).
+task.spawn(function()
+    while alive and _G.NSBP_Gen == myGen do
+        pcall(fireKnit, CONFIG.AFKService, "RE", CONFIG.AFKRemote, {})
+        task.wait(CONFIG.AFKDelay)
+    end
+end)
+
 note("NullShight Pyramid loaded. AutoPickup " ..
     (state.autoPickup and "ON" or "OFF"))
 
@@ -484,7 +495,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "BUILD THE PYRAMID v0.1.1"
+    sub.Text = "BUILD THE PYRAMID v0.1.2"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
