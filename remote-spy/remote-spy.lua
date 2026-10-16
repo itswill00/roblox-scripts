@@ -1,4 +1,4 @@
--- NullShight NetLens // v1.2.2 -- RemoteSpy
+-- NullShight NetLens // v1.2.3 -- RemoteSpy
 -- A precise, low-footprint network lens: logs RemoteEvent/RemoteFunction
 -- traffic, coalesces duplicates, and generates paste-ready call snippets.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -264,7 +264,7 @@ local seqNum = 0
 local function statsText()
     local n = 0
     for _ in pairs(remoteSet) do n = n + 1 end
-    return "NETLENS v1.2.2  |  " .. tostring(n) .. " remotes  |  " ..
+    return "NETLENS v1.2.3  |  " .. tostring(n) .. " remotes  |  " ..
         tostring(totalCalls) .. " calls  |  " .. hookInfo
 end
 
@@ -842,8 +842,27 @@ local function buildUI()
         refreshStats()
     end)
     toolBtn(2 * (bw + 8), bw, "TEST", function()
-        -- End-to-end check: fire on a temp local remote. If the hook
-        -- works, a row appears and counters move.
+        -- Two-stage verdict, no guessing:
+        -- 1) canary: hookfunction(print) must intercept a print call.
+        --    Proves hookfunction REALLY works (not a stub).
+        -- 2) remote: fire a temp RemoteEvent; a row must appear.
+        local canary = "hf:" .. type(hookfunction)
+        pcall(function()
+            if type(hookfunction) ~= "function" then
+                canary = "hf:missing"
+                return
+            end
+            local wrap = newcclosure or function(f) return f end
+            local hit = false
+            local orig = hookfunction(print, wrap(function(...)
+                hit = true
+                return orig(...)
+            end))
+            print("netlens_canary")
+            pcall(hookfunction, print, orig)
+            canary = hit and "hf:WORKS" or "hf:STUBBED"
+        end)
+        local mm = "mm:" .. type(hookmetamethod)
         pcall(function()
             local t = Instance.new("RemoteEvent")
             t.Name = "NetLensSelfTest"
@@ -852,7 +871,8 @@ local function buildUI()
             t:Destroy()
         end)
         task.delay(0.5, function()
-            note("mode=" .. hookMode .. " seen=" .. tostring(ncTotal) ..
+            note(canary .. " " .. mm .. " mode=" .. hookMode ..
+                " seen=" .. tostring(ncTotal) ..
                 " logged=" .. tostring(totalCalls))
         end)
     end)
