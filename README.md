@@ -44,3 +44,16 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scri
 
 Remote teramati dari skrip publik — kalau game update dan ada yang mati,
 mapping ulang via SimpleSpy, yang diganti cuma CONFIG.
+
+## Greedy Growers (`greedy-growers/`)
+
+`greedy-growers.lua` — v0.1.0, game Knit (Services.<Svc>.RF/.RE):
+
+- Auto Buy Seed (ID di CONFIG), Auto Plant (tipe + modifier di CONFIG).
+- Auto Harvest via prompt fallback (remote khusus belum ke-map).
+- Auto Dead Tree, Auto Sell + SELL NOW, Auto Quest (default off).
+- UI v2 + grab-anywhere drag + UNLOAD.
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/greedy-growers/greedy-growers.lua"))()
+```
