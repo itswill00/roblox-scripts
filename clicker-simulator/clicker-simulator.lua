@@ -235,25 +235,26 @@ local function buildEmblem(parent, panel)
     emb.Name = "Emblem"
     emb.Size = UDim2.new(0, 56, 0, 56)
     emb.Position = UDim2.new(0.5, -28, 0.5, -28)
-    emb.BackgroundColor3 = Color3.fromRGB(20, 30, 24)
+    emb.BackgroundColor3 = Color3.fromRGB(44, 50, 68)
     emb.BorderSizePixel = 0
     emb.Font = Enum.Font.Code
-    emb.TextSize = 18
-    emb.TextColor3 = Color3.fromRGB(245, 245, 250)
+    emb.TextSize = 20
+    emb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    emb.TextStrokeTransparency = 0.5
     emb.Text = "NS"
     emb.Parent = pad
     round(emb, 28)
 
     local grad = Instance.new("UIGradient")
     grad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(36, 66, 46)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(14, 22, 16)),
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(64, 74, 100)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(28, 34, 50)),
     })
     grad.Rotation = 35
     grad.Parent = emb
 
     local ring = Instance.new("UIStroke")
-    ring.Color = Color3.fromRGB(200, 210, 200)
+    ring.Color = Color3.fromRGB(235, 235, 245)
     ring.Thickness = 2
     ring.Parent = emb
 
