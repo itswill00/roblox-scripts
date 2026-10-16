@@ -1,4 +1,4 @@
--- NullShight Sword Loot Monarch // v0.1.4
+-- NullShight Sword Loot Monarch // v0.1.5
 -- Game: +1 Sword Loot Monarch (93239606899307). Clicker loop: click for
 -- power, train, clear stages, loot, forge swords, rebirth.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -17,7 +17,8 @@ local CONFIG = {
     TrainRemote = nil,                   -- fill after mapping
     TrainArgs = {},
     StageRemote = "Remotes.MainEvent",     -- stage select, mapped 2026-10-16
-    StageArgs = { 151, "d7" },           -- 2nd arg = stage id, update as you progress
+    StageAct = 151,                      -- action id stays fixed
+    StageId = "d7",                      -- your stage: d1..d10, tell me to change
     RebirthRemote = "Remotes.MainFunction", -- InvokeServer, mapped 2026-10-16
     RebirthArgs = { 173 },
     CollectRemote = nil,                 -- (40,1) was wrong, unmapped
@@ -186,7 +187,8 @@ end)
 task.spawn(function()
     while alive and _G.NSSLM_Gen == myGen do
         if state.autoStage and CONFIG.StageRemote then
-            pcall(fireMapped, CONFIG.StageRemote, CONFIG.StageArgs)
+            pcall(fireMapped, CONFIG.StageRemote,
+                { CONFIG.StageAct, CONFIG.StageId })
         end
         task.wait(CONFIG.StageDelay)
     end
@@ -419,7 +421,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "SWORD LOOT MONARCH v0.1.4"
+    sub.Text = "SWORD LOOT MONARCH v0.1.5"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -709,7 +711,7 @@ local function buildUI()
             CONFIG.TrainRemote, CONFIG.TrainArgs))
     toggleCell(farm, 1, 0, "Auto Stage", state.autoStage,
         farmToggle("Stage", "autoStage",
-            CONFIG.StageRemote, CONFIG.StageArgs))
+            CONFIG.StageRemote, { CONFIG.StageAct, CONFIG.StageId }))
     toggleCell(farm, 0, 1, "Auto Rebirth", state.autoRebirth,
         farmToggle("Rebirth", "autoRebirth",
             CONFIG.RebirthRemote, CONFIG.RebirthArgs))
