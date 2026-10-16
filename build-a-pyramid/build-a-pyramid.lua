@@ -1,4 +1,4 @@
--- NullShight Build the Pyramid // v0.1.2
+-- NullShight Build the Pyramid // v0.2.0
 -- Game: Build the Pyramid! (123720558354386). Haul loop: grab blocks at the
 -- quarry, carry them to the pyramid, train speed/strength on the side.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -19,10 +19,13 @@ local CONFIG = {
     -- NetLens (merge OFF) while placing twice and update these.
     DeliverArgs = { 5, 4086, 7, {} },
     TrainService = "GymService",
-    TrainSpeedRemote = nil,              -- e.g. treadmill: fill after mapping
-    TrainSpeedArgs = { "1" },
-    TrainStrengthRemote = "StartBench",  -- mapped 2026-10-16
-    TrainStrengthArgs = { "1" },         -- bench/machine id as string
+    -- Strength = teleport to bench seat + StartBench(folderName).
+    -- Speed has NO remote: training = standing on treadmill hitbox.
+    -- Station discovery: Shared.Config.GymConfig (auto, like MarioHub).
+    TrainStrengthRemote = "StartBench",  -- RF, mapped 2026-10-16
+    StopBenchRemote = "StopBench",       -- RF, mapped 2026-10-16
+    BenchStation = nil,   -- nil = auto best; or set gym folder name
+    TreadStation = nil,   -- nil = auto best; or set gym folder name
     AFKService = "AFKService",
     AFKRemote = "Activity",              -- RE heartbeat, mapped 2026-10-16
     AFKDelay = 60,
@@ -94,6 +97,7 @@ local function unload(quiet)
     state.autoDeliver = false
     state.autoTrainSpeed = false
     state.autoTrainStrength = false
+    pcall(stopBench)
     for _, c in ipairs(conns) do
         pcall(function() c:Disconnect() end)
     end
@@ -178,6 +182,55 @@ local function fireKnit(svc, kind, name, args)
 end
 
 -- Resolve dotted workspace path ("Regions.Region:Quarry").
+-- Gym discovery: require the shared GymConfig (client-readable), then
+-- resolve machine parts in the workspace gym folder by station name.
+local gymCfgCache = nil
+local function gymCfg()
+    if gymCfgCache then return gymCfgCache end
+    pcall(function()
+        local shared = ReplicatedStorage:WaitForChild("Shared", 5)
+        local cfg = shared and shared:WaitForChild("Config", 5)
+        local mod = cfg and cfg:WaitForChild("GymConfig", 5)
+        if mod then gymCfgCache = require(mod) end
+    end)
+    return gymCfgCache
+end
+
+local function attrStr(inst, name)
+    if not inst then return nil end
+    local ok, v = pcall(inst.GetAttribute, inst, name)
+    if ok and type(v) == "string" and v ~= "" then return v end
+    return nil
+end
+
+local function stationPart(g, folderName, modelKey, partKey)
+    if not g or not folderName then return nil end
+    local gym = workspace:FindFirstChild(g.GymFolderName)
+    local st = gym and gym:FindFirstChild(folderName)
+    local m = st and g[modelKey] and st:FindFirstChild(g[modelKey])
+    local part = m and g[partKey] and m:FindFirstChild(g[partKey])
+    if part and part:IsA("BasePart") then return part end
+    return nil
+end
+
+local function sortedStations(list, key)
+    local out = {}
+    for _, st in ipairs(list or {}) do
+        if type(st) == "table" and st.GymFolder then
+            out[#out + 1] = st
+        end
+    end
+    table.sort(out, function(a, b)
+        return (tonumber(a[key]) or 0) > (tonumber(b[key]) or 0)
+    end)
+    return out
+end
+
+local function stopBench()
+    local r = knitRemote(CONFIG.TrainService, "RF", CONFIG.StopBenchRemote)
+    if r then pcall(function() r:InvokeServer() end) end
+end
+
 local function findRegion(path)
     if not path or path == "" then return nil end
     local node = workspace
@@ -250,15 +303,84 @@ task.spawn(function()
     end
 end)
 
+-- Station locks: stick to a working station, re-pick every 2 minutes
+-- (covers unlocks) or when its parts vanish.
+local benchLock, benchLockAt = nil, 0
+local treadLock, treadLockAt = nil, 0
+
+local function pickStation(listKey, multKey, manual, modelKey, partKey, lock, lockAt)
+    local g = gymCfg()
+    if not g then return nil, nil end
+    if manual then
+        local part = stationPart(g, manual, modelKey, partKey)
+        if part then return manual, part end
+    end
+    if lock and os.clock() - lockAt < 120 then
+        local part = stationPart(g, lock, modelKey, partKey)
+        if part then return lock, part end
+    end
+    for _, st in ipairs(sortedStations(g[listKey], multKey)) do
+        local part = stationPart(g, st.GymFolder, modelKey, partKey)
+        if part then return st.GymFolder, part end
+    end
+    return nil, nil
+end
+
 task.spawn(function()
     while alive and _G.NSBP_Gen == myGen do
-        if state.autoTrainSpeed and CONFIG.TrainSpeedRemote then
-            pcall(fireKnit, CONFIG.TrainService, "RF",
-                CONFIG.TrainSpeedRemote, CONFIG.TrainSpeedArgs)
+        if state.autoTrainStrength then
+            pcall(function()
+                local g = gymCfg()
+                if not g then return end
+                local folder = pickStation("BenchpressStations",
+                    "StrengthMultiplier", CONFIG.BenchStation,
+                    "BenchpressModelName", "AlignPartName",
+                    benchLock, benchLockAt)
+                if not folder then return end
+                local benching = g.BenchStationAttribute and
+                    attrStr(LocalPlayer, g.BenchStationAttribute) or nil
+                if benching == folder then
+                    benchLock, benchLockAt = folder, os.clock()
+                    return
+                end
+                local _, seat = pickStation("BenchpressStations",
+                    "StrengthMultiplier", folder,
+                    "BenchpressModelName", "AlignPartName", nil, 0)
+                local root = getRoot()
+                if root and seat and
+                    (root.Position - seat.Position).Magnitude > 12 then
+                    local cf = root.CFrame
+                    root.CFrame = CFrame.new(
+                        seat.Position + Vector3.new(0, 3, 0)) *
+                        (cf - cf.Position)
+                end
+                local r = knitRemote(CONFIG.TrainService, "RF",
+                    CONFIG.TrainStrengthRemote)
+                if r then
+                    local ok, ret = pcall(function()
+                        return r:InvokeServer(folder)
+                    end)
+                    if ok and ret == true then
+                        benchLock, benchLockAt = folder, os.clock()
+                    end
+                end
+            end)
         end
-        if state.autoTrainStrength and CONFIG.TrainStrengthRemote then
-            pcall(fireKnit, CONFIG.TrainService, "RF",
-                CONFIG.TrainStrengthRemote, CONFIG.TrainStrengthArgs)
+        if state.autoTrainSpeed then
+            pcall(function()
+                local folder, belt = pickStation("TreadmillStations",
+                    "SpeedMultiplier", CONFIG.TreadStation,
+                    "TreadmillModelName", "HitboxName",
+                    treadLock, treadLockAt)
+                if not belt then return end
+                treadLock, treadLockAt = folder, os.clock()
+                local root = getRoot()
+                if root and (root.Position - belt.Position).Magnitude > 8 then
+                    local cf = root.CFrame
+                    root.CFrame = CFrame.new(belt.Position) *
+                        (cf - cf.Position)
+                end
+            end)
         end
         task.wait(CONFIG.TrainDelay)
     end
@@ -293,6 +415,17 @@ task.spawn(function()
         note("Remote missing: " .. table.concat(missing, ", "))
     else
         note("Pickup remote OK")
+    end
+    local g = gymCfg()
+    if g then
+        local nb = g.BenchpressStations and #g.BenchpressStations or 0
+        local nt = g.TreadmillStations and #g.TreadmillStations or 0
+        note("Gym: " .. tostring(nb) .. " bench, " ..
+            tostring(nt) .. " treadmills")
+    else
+        note("GymConfig unreadable - train disabled")
+        state.autoTrainSpeed = false
+        state.autoTrainStrength = false
     end
     if not CONFIG.DeliverRemote then
         note("Deliver uses prompt fallback until mapped")
@@ -495,7 +628,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "BUILD THE PYRAMID v0.1.2"
+    sub.Text = "BUILD THE PYRAMID v0.2.0"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -782,20 +915,11 @@ local function buildUI()
 
     local train = pages.train
     toggleCell(train, 0, 0, "Train Speed", state.autoTrainSpeed,
-        function(v)
-            state.autoTrainSpeed = v
-            if v and not knitRemote(CONFIG.TrainService, "RF",
-                CONFIG.TrainSpeedRemote) then
-                note("Train Speed not mapped yet - use NetLens")
-            end
-        end)
+        function(v) state.autoTrainSpeed = v end)
     toggleCell(train, 1, 0, "Train Strength", state.autoTrainStrength,
         function(v)
             state.autoTrainStrength = v
-            if v and not knitRemote(CONFIG.TrainService, "RF",
-                CONFIG.TrainStrengthRemote) then
-                note("Train Strength not mapped yet - use NetLens")
-            end
+            if not v then stopBench() end
         end)
 
     local sys = pages.sys
