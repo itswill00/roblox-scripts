@@ -1,4 +1,4 @@
--- NullShight Slice A Dummy! // v0.2.0
+-- NullShight Slice A Dummy! // v0.2.1
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
 -- Game-specific remote names live in CONFIG below: fill them from a live
 -- mapping run (see README), everything else already works generically.
@@ -159,6 +159,68 @@ end)
 
 -- Monochrome compact panel. Touch-first: big tap targets, draggable
 -- title bar, collapsible to a pill. No external UI libs needed.
+-- Draggable circular NS emblem: tap toggles the panel, drag moves it.
+-- Mirrors the MLBB floating emblem, drawn with pure UI (no asset upload).
+local function buildEmblem(parent, panel)
+    local emb = Instance.new("TextButton")
+    emb.Name = "Emblem"
+    emb.Size = UDim2.new(0, 56, 0, 56)
+    emb.Position = UDim2.new(1, -72, 1, -140)
+    emb.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
+    emb.BorderSizePixel = 0
+    emb.Font = Enum.Font.Code
+    emb.TextSize = 18
+    emb.TextColor3 = Color3.fromRGB(245, 245, 250)
+    emb.Text = "NS"
+    emb.AutoButtonColor = true
+    emb.Parent = parent
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = emb
+
+    local ring = Instance.new("UIStroke")
+    ring.Color = Color3.fromRGB(200, 200, 210)
+    ring.Thickness = 2
+    ring.Parent = emb
+
+    local visible = true
+    local downPos, startPos, moved = nil, nil, false
+    emb.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            downPos = input.Position
+            startPos = emb.Position
+            moved = false
+        end
+    end)
+    emb.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            if not moved then
+                visible = not visible
+                panel.Visible = visible
+                ring.Color = visible and Color3.fromRGB(245, 245, 250)
+                    or Color3.fromRGB(110, 115, 130)
+            end
+            downPos = nil
+        end
+    end)
+    game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if downPos
+            and (input.UserInputType == Enum.UserInputType.MouseMovement
+                or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - downPos
+            if d.Magnitude > 6 then moved = true end
+            if moved then
+                emb.Position = UDim2.new(startPos.X.Scale,
+                    startPos.X.Offset + d.X, startPos.Y.Scale,
+                    startPos.Y.Offset + d.Y)
+            end
+        end
+    end)
+end
+
 local function buildUI()
     local parent = nil
     pcall(function()
@@ -311,6 +373,7 @@ local function buildUI()
     end)
 
     label("Auto Train  (next update)", true)
+    buildEmblem(gui, main)
     return true
 end
 
