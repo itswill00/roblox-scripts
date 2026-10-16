@@ -22,6 +22,37 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 local LocalPlayer = Players.LocalPlayer
 
+-- Unload registry: every connection and loop checks in here so one call
+-- tears the whole script down cleanly. Reloading twice never stacks.
+local alive = true
+local conns = {}
+local function track(c)
+    conns[#conns + 1] = c
+    return c
+end
+do
+    pcall(function()
+        local root = (gethui and gethui()) or game:GetService("CoreGui")
+        local old = root:FindFirstChild("NullShightSlice")
+        if old then old:Destroy() end
+    end)
+end
+
+local function unload(quiet)
+    if not alive then return end
+    alive = false
+    pcall(function() state.autoSwing = false end)
+    for _, c in ipairs(conns) do
+        pcall(function() c:Disconnect() end)
+    end
+    pcall(function()
+        local root = (gethui and gethui()) or game:GetService("CoreGui")
+        local g = root:FindFirstChild("NullShightSlice")
+        if g then g:Destroy() end
+    end)
+    if not quiet then note("NullShight unloaded") end
+end
+
 local function note(msg)
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
@@ -34,10 +65,11 @@ end
 
 -- Anti-AFK: generic, works everywhere.
 if CONFIG.AntiAfk then
-    LocalPlayer.Idled:Connect(function()
+    track(LocalPlayer.Idled:Connect(function()
+        if not alive then return end
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new())
-    end)
+    end))
 end
 
 -- Optional FPS boost for weak phones: kills shadows, water, postfx.
@@ -135,7 +167,7 @@ note("NullShight Slice loaded. AutoSwing " ..
     (state.autoSwing and "ON" or "OFF"))
 
 task.spawn(function()
-    while true do
+    while alive do
         if state.autoSwing then
             local fired = fireSlash()
             if not fired then
@@ -151,18 +183,31 @@ end)
 -- Draggable circular NS emblem: tap toggles the panel, drag moves it.
 -- Mirrors the MLBB floating emblem, drawn with pure UI (no asset upload).
 local function buildEmblem(parent, panel)
-    local emb = Instance.new("TextButton")
+    -- Touch pad owns all input: 96px grab area, 56px visual on top.
+    -- A fat invisible pad is what makes drags reliable on phones; the
+    -- artwork itself never takes input so nothing swallows the finger.
+    local pad = Instance.new("TextButton")
+    pad.Name = "EmblemPad"
+    pad.Size = UDim2.new(0, 96, 0, 96)
+    pad.Position = UDim2.new(1, -112, 1, -180)
+    pad.BackgroundTransparency = 1
+    pad.Text = ""
+    pad.AutoButtonColor = false
+    pad.Active = true
+    pad.Selectable = false
+    pad.Parent = parent
+
+    local emb = Instance.new("TextLabel")
     emb.Name = "Emblem"
     emb.Size = UDim2.new(0, 56, 0, 56)
-    emb.Position = UDim2.new(1, -72, 1, -140)
+    emb.Position = UDim2.new(0.5, -28, 0.5, -28)
     emb.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
     emb.BorderSizePixel = 0
     emb.Font = Enum.Font.Code
     emb.TextSize = 18
     emb.TextColor3 = Color3.fromRGB(245, 245, 250)
     emb.Text = "NS"
-    emb.AutoButtonColor = true
-    emb.Parent = parent
+    emb.Parent = pad
 
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(1, 0)
@@ -175,15 +220,15 @@ local function buildEmblem(parent, panel)
 
     local visible = true
     local downPos, startPos, moved = nil, nil, false
-    emb.InputBegan:Connect(function(input)
+    track(pad.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             downPos = input.Position
-            startPos = emb.Position
+            startPos = pad.Position
             moved = false
         end
-    end)
-    emb.InputEnded:Connect(function(input)
+    end))
+    track(pad.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             if not moved then
@@ -194,20 +239,20 @@ local function buildEmblem(parent, panel)
             end
             downPos = nil
         end
-    end)
-    game:GetService("UserInputService").InputChanged:Connect(function(input)
+    end))
+    track(game:GetService("UserInputService").InputChanged:Connect(function(input)
         if downPos
             and (input.UserInputType == Enum.UserInputType.MouseMovement
                 or input.UserInputType == Enum.UserInputType.Touch) then
             local d = input.Position - downPos
-            if d.Magnitude > 6 then moved = true end
+            if d.Magnitude > 10 then moved = true end
             if moved then
-                emb.Position = UDim2.new(startPos.X.Scale,
+                pad.Position = UDim2.new(startPos.X.Scale,
                     startPos.X.Offset + d.X, startPos.Y.Scale,
                     startPos.Y.Offset + d.Y)
             end
         end
-    end)
+    end))
 end
 
 local function buildUI()
@@ -225,7 +270,7 @@ local function buildUI()
 
     local main = Instance.new("Frame")
     main.Name = "Panel"
-    main.Size = UDim2.new(0, 230, 0, 196)
+    main.Size = UDim2.new(0, 230, 0, 232)
     main.Position = UDim2.new(0, 16, 0, 120)
     main.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
     main.BorderColor3 = Color3.fromRGB(120, 120, 128)
@@ -263,31 +308,31 @@ local function buildUI()
     body.Parent = main
 
     local collapsed = false
-    mini.MouseButton1Click:Connect(function()
+    track(mini.MouseButton1Click:Connect(function()
         collapsed = not collapsed
         body.Visible = not collapsed
         main.Size = collapsed and UDim2.new(0, 230, 0, 30)
-            or UDim2.new(0, 230, 0, 196)
+            or UDim2.new(0, 230, 0, 232)
         mini.Text = collapsed and "+" or "_"
-    end)
+    end))
 
     -- drag by the title bar, mouse or touch
     local dragging, dragStart, startPos = false, nil, nil
-    title.InputBegan:Connect(function(input)
+    track(title.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = main.Position
         end
-    end)
-    title.InputEnded:Connect(function(input)
+    end))
+    track(title.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
         end
-    end)
-    game:GetService("UserInputService").InputChanged:Connect(function(input)
+    end))
+    track(game:GetService("UserInputService").InputChanged:Connect(function(input)
         if dragging
             and (input.UserInputType == Enum.UserInputType.MouseMovement
                 or input.UserInputType == Enum.UserInputType.Touch) then
@@ -295,7 +340,7 @@ local function buildUI()
             main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
                 startPos.Y.Scale, startPos.Y.Offset + d.Y)
         end
-    end)
+    end))
 
     local y = 6
     local function row(label, initial, cb)
@@ -314,11 +359,11 @@ local function buildUI()
             btn.Text = (on and "[ ON ]  " or "[ OFF ] ") .. label
         end
         paint()
-        btn.MouseButton1Click:Connect(function()
+        track(btn.MouseButton1Click:Connect(function()
             on = not on
             paint()
             cb(on)
-        end)
+        end))
         btn.Parent = body
         y = y + 36
         return function(v)
@@ -356,9 +401,25 @@ local function buildUI()
     boostBtn.Text = "FPS Boost"
     boostBtn.Parent = body
     y = y + 36
-    boostBtn.MouseButton1Click:Connect(function()
+    track(boostBtn.MouseButton1Click:Connect(function()
         pcall(fpsBoost)
         note("FPS boost applied")
+    end))
+
+    local killBtn = Instance.new("TextButton")
+    killBtn.Size = UDim2.new(1, -16, 0, 30)
+    killBtn.Position = UDim2.new(0, 8, 0, y)
+    killBtn.BackgroundColor3 = Color3.fromRGB(64, 20, 20)
+    killBtn.BorderColor3 = Color3.fromRGB(200, 90, 90)
+    killBtn.BorderSizePixel = 1
+    killBtn.Font = Enum.Font.Code
+    killBtn.TextSize = 12
+    killBtn.TextColor3 = Color3.fromRGB(255, 180, 180)
+    killBtn.Text = "UNLOAD SCRIPT"
+    killBtn.Parent = body
+    y = y + 36
+    killBtn.MouseButton1Click:Connect(function()
+        unload()
     end)
 
     label("Auto Train  (next update)", true)
