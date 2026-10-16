@@ -1,4 +1,4 @@
--- NullShight Greedy Growers // v0.1.0
+-- NullShight Greedy Growers // v0.2.0
 -- Game: Greedy Growers (74102906764176). Loop: beli seed -> tanam round ->
 -- panen sebelum kesamber petir -> jual. Pohon mati dibersihin otomatis.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -468,7 +468,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "GREEDY GROWERS v0.1.0"
+    sub.Text = "GREEDY GROWERS v0.2.0"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -485,11 +485,13 @@ local function buildUI()
     round(mini, 9)
     stroke(mini, Color3.fromRGB(55, 60, 78), 0.55)
 
+    local PW = 470
     local body = Instance.new("Frame")
     body.Name = "Body"
-    body.Size = UDim2.new(1, 0, 0, 500)
+    body.Size = UDim2.new(1, 0, 0, 224)
     body.Position = UDim2.new(0, 0, 0, y)
     body.BackgroundTransparency = 1
+    body.ClipsDescendants = true
     body.Parent = main
 
     -- Grab-anywhere: geser dari header, sela panel, bahkan atas tombol.
@@ -499,8 +501,9 @@ local function buildUI()
         local vs = (cam and cam.ViewportSize) or Vector2.new(800, 600)
         local p = main.Position
         local w = main.AbsoluteSize.X
+        local h = main.AbsoluteSize.Y
         local x = math.max(-w + 80, math.min(p.X.Offset, vs.X - 80))
-        local yy = math.max(0, math.min(p.Y.Offset, vs.Y - 60))
+        local yy = math.max(-h + 60, math.min(p.Y.Offset, vs.Y - 60))
         main.Position = UDim2.new(0, x, 0, yy)
     end
     local dragging, dragStart, startPos, moved = false, nil, nil, false
@@ -546,65 +549,125 @@ local function buildUI()
     track(body.InputBegan:Connect(pressBegan))
     track(body.InputEnded:Connect(pressEnded))
 
-    local by = 0
-    local function section(text)
-        local t = Instance.new("TextLabel")
-        t.Size = UDim2.new(1, -32, 0, 18)
-        t.Position = UDim2.new(0, 16, 0, by)
-        t.BackgroundTransparency = 1
-        t.Font = Enum.Font.Code
-        t.TextSize = 10
-        t.TextXAlignment = Enum.TextXAlignment.Left
-        t.TextColor3 = DIM
-        t.Text = text
-        t.Parent = body
-        by = by + 22
+    -- Tab bar horizontal: 3 tab, 1 halaman aktif, tinggi konten fix.
+    local tabDefs = {
+        { id = "farm", label = "FARM" },
+        { id = "jual", label = "JUAL" },
+        { id = "sys", label = "SYS" },
+    }
+    local pages = {}
+    local tabBtns = {}
+    local curTab = "farm"
+    local function paintTabs()
+        for _, d in ipairs(tabDefs) do
+            local b = tabBtns[d.id]
+            if b then
+                local active = d.id == curTab
+                tw(b, { BackgroundColor3 = active and CARD2
+                    or Color3.fromRGB(19, 22, 29) }, 0.15)
+                b.TextColor3 = active and ACCENT or DIM
+            end
+        end
     end
+    local function switchTab(id)
+        if id == curTab then return end
+        local old = pages[curTab]
+        curTab = id
+        paintTabs()
+        local new = pages[curTab]
+        if old then
+            local f = tw(old, { GroupTransparency = 1 }, 0.12)
+            pcall(function()
+                f.Completed:Wait()
+                if pages[curTab] ~= old then old.Visible = false end
+            end)
+        end
+        if new then
+            new.Visible = true
+            tw(new, { GroupTransparency = 0 }, 0.18)
+        end
+    end
+    local TW = (PW - 24 - 16) / 3
+    for i, d in ipairs(tabDefs) do
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0, TW, 0, 30)
+        b.Position = UDim2.new(0, 12 + (i - 1) * (TW + 8), 0, 6)
+        b.BackgroundColor3 = Color3.fromRGB(19, 22, 29)
+        b.BorderSizePixel = 0
+        b.Font = Enum.Font.Code
+        b.TextSize = 11
+        b.TextColor3 = DIM
+        b.Text = d.label
+        b.AutoButtonColor = false
+        b.Parent = body
+        round(b, 8)
+        stroke(b, Color3.fromRGB(55, 60, 78), 0.55)
+        tabBtns[d.id] = b
+        track(b.InputBegan:Connect(function(input)
+            if not isTouch(input) then return end
+            pressBegan(input)
+        end))
+        track(b.InputEnded:Connect(function(input)
+            if not isTouch(input) then return end
+            if pressEnded(input) then switchTab(d.id) end
+        end))
+        local pg = Instance.new("CanvasGroup")
+        pg.Name = "Page_" .. d.id
+        pg.Size = UDim2.new(1, -24, 0, 172)
+        pg.Position = UDim2.new(0, 12, 0, 44)
+        pg.BackgroundTransparency = 1
+        pg.Visible = d.id == curTab
+        pg.GroupTransparency = d.id == curTab and 0 or 1
+        pg.Parent = body
+        pages[d.id] = pg
+    end
+    paintTabs()
 
-    local function toggleRow(labelText, initial, cb)
+    local COLW = (PW - 24 - 8) / 2
+    local function toggleCell(parent, col, row, labelText, initial, cb)
         local card = Instance.new("TextButton")
-        card.Size = UDim2.new(1, -24, 0, 42)
-        card.Position = UDim2.new(0, 12, 0, by)
+        card.Size = UDim2.new(0, COLW, 0, 40)
+        card.Position = UDim2.new(0, col * (COLW + 8), 0, row * 48)
         card.BackgroundColor3 = CARD
         card.BorderSizePixel = 0
         card.Text = ""
         card.AutoButtonColor = false
-        card.Parent = body
+        card.Parent = parent
         round(card, 10)
         stroke(card, Color3.fromRGB(55, 60, 78), 0.55)
 
         local lb = Instance.new("TextLabel")
-        lb.Size = UDim2.new(1, -72, 1, 0)
-        lb.Position = UDim2.new(0, 12, 0, 0)
+        lb.Size = UDim2.new(1, -70, 1, 0)
+        lb.Position = UDim2.new(0, 10, 0, 0)
         lb.BackgroundTransparency = 1
         lb.Font = Enum.Font.Code
-        lb.TextSize = 12
+        lb.TextSize = 11
         lb.TextXAlignment = Enum.TextXAlignment.Left
         lb.TextColor3 = INK
         lb.Text = labelText
         lb.Parent = card
 
         local sw = Instance.new("Frame")
-        sw.Size = UDim2.new(0, 46, 0, 26)
+        sw.Size = UDim2.new(0, 44, 0, 24)
         sw.AnchorPoint = Vector2.new(1, 0.5)
-        sw.Position = UDim2.new(1, -12, 0.5, 0)
+        sw.Position = UDim2.new(1, -10, 0.5, 0)
         sw.BorderSizePixel = 0
         sw.Parent = card
-        round(sw, 13)
+        round(sw, 12)
 
         local knob = Instance.new("Frame")
-        knob.Size = UDim2.new(0, 20, 0, 20)
+        knob.Size = UDim2.new(0, 18, 0, 18)
         knob.AnchorPoint = Vector2.new(0, 0.5)
         knob.Position = UDim2.new(0, 3, 0.5, 0)
         knob.BackgroundColor3 = Color3.fromRGB(245, 245, 250)
         knob.BorderSizePixel = 0
         knob.Parent = sw
-        round(knob, 10)
+        round(knob, 9)
 
         local on = initial
         local function paint(animate)
             local swC = on and ACCENT or Color3.fromRGB(48, 52, 68)
-            local kx = on and UDim2.new(1, -23, 0.5, 0)
+            local kx = on and UDim2.new(1, -21, 0.5, 0)
                 or UDim2.new(0, 3, 0.5, 0)
             if animate then
                 tw(sw, { BackgroundColor3 = swC }, 0.2)
@@ -624,13 +687,12 @@ local function buildUI()
                 cb(on)
             end
         end))
-        by = by + 48
     end
 
-    local function actionBtn(labelText, cb, danger)
+    local function wideBtn(parent, row, labelText, cb, danger)
         local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -24, 0, 38)
-        btn.Position = UDim2.new(0, 12, 0, by)
+        btn.Size = UDim2.new(1, 0, 0, 38)
+        btn.Position = UDim2.new(0, 0, 0, row * 46)
         btn.BackgroundColor3 = danger and Color3.fromRGB(52, 24, 26)
             or CARD2
         btn.BorderSizePixel = 0
@@ -639,7 +701,7 @@ local function buildUI()
         btn.TextColor3 = danger and Color3.fromRGB(255, 175, 175) or INK
         btn.Text = labelText
         btn.AutoButtonColor = false
-        btn.Parent = body
+        btn.Parent = parent
         round(btn, 10)
         if danger then
             stroke(btn, Color3.fromRGB(170, 80, 85), 0.4)
@@ -661,46 +723,52 @@ local function buildUI()
             tw(btn, { BackgroundColor3 = base }, 0.15)
             if pressEnded(input) then cb() end
         end))
-        by = by + 44
     end
 
-    section("  FARM")
-    toggleRow("Auto Buy Seed", state.autoBuy,
+    -- FARM: grid 2x2. JUAL: 2 toggle + SELL NOW. SYS: FIX LAG + UNLOAD.
+    local farm = pages.farm
+    toggleCell(farm, 0, 0, "Auto Buy Seed", state.autoBuy,
         function(v) state.autoBuy = v end)
-    toggleRow("Auto Plant", state.autoPlant,
+    toggleCell(farm, 1, 0, "Auto Plant", state.autoPlant,
         function(v) state.autoPlant = v end)
-    toggleRow("Auto Harvest", state.autoHarvest,
+    toggleCell(farm, 0, 1, "Auto Harvest", state.autoHarvest,
         function(v) state.autoHarvest = v end)
-    toggleRow("Auto Dead Tree", state.autoDead,
+    toggleCell(farm, 1, 1, "Auto Dead Tree", state.autoDead,
         function(v) state.autoDead = v end)
 
-    section("  JUAL + QUEST")
-    toggleRow("Auto Sell", state.autoSell, function(v)
+    local jual = pages.jual
+    toggleCell(jual, 0, 0, "Auto Sell", state.autoSell, function(v)
         state.autoSell = v
         if v then
             pcall(fireKnit, CONFIG.SellService, "RF", CONFIG.SellRemote, {})
         end
     end)
-    toggleRow("Auto Quest", state.autoQuest,
+    toggleCell(jual, 1, 0, "Auto Quest", state.autoQuest,
         function(v) state.autoQuest = v end)
-
-    section("  SISTEM")
-    actionBtn("SELL NOW", function()
+    wideBtn(jual, 1, "SELL NOW", function()
         pcall(fireKnit, CONFIG.SellService, "RF", CONFIG.SellRemote, {})
         note("Selling...")
     end)
-    actionBtn("UNLOAD SCRIPT", function() unload() end, true)
 
-    local fullH = y + by + 12
-    body.Size = UDim2.new(1, 0, 0, by)
-    main.Size = UDim2.new(0, 252, 0, fullH)
+    local sys = pages.sys
+    wideBtn(sys, 0, "FIX LAG", function()
+        pcall(fpsBoost)
+        CONFIG.HarvestDelay = 2
+        CONFIG.BuyDelay = 10
+        note("Lag fix applied")
+    end)
+    wideBtn(sys, 1, "UNLOAD SCRIPT", function() unload() end, true)
+
+    local fullH = y + 224 + 12
+    body.Size = UDim2.new(1, 0, 0, 224)
+    main.Size = UDim2.new(0, PW, 0, fullH)
 
     local collapsed = false
     track(mini.MouseButton1Click:Connect(function()
         collapsed = not collapsed
         mini.Text = collapsed and "+" or "-"
-        tw(main, { Size = collapsed and UDim2.new(0, 252, 0, 52)
-            or UDim2.new(0, 252, 0, fullH) }, 0.3,
+        tw(main, { Size = collapsed and UDim2.new(0, PW, 0, 52)
+            or UDim2.new(0, PW, 0, fullH) }, 0.3,
             Enum.EasingStyle.Quart)
     end))
 
