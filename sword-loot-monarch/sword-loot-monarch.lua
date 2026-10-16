@@ -1,4 +1,4 @@
--- NullShight Sword Loot Monarch // v0.1.0
+-- NullShight Sword Loot Monarch // v0.1.1
 -- Game: +1 Sword Loot Monarch (93239606899307). Clicker loop: click for
 -- power, train, clear stages, loot, forge swords, rebirth.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -12,7 +12,7 @@ local CONFIG = {
     ClickRemote = "Remotes.MainEvent",   -- dotted from ReplicatedStorage
     ClickArgs = { 220 },
     AutoClick = true,
-    ClickDelay = 0.2,
+    ClickDelay = 0,          -- 0 = every frame (~60/s), max speed
     Burst = 50,                          -- CLICK x50 burst count
     TrainRemote = nil,                   -- fill after mapping
     TrainArgs = {},
@@ -166,7 +166,11 @@ task.spawn(function()
         if state.autoClick and CONFIG.ClickRemote then
             pcall(fireMapped, CONFIG.ClickRemote, CONFIG.ClickArgs)
         end
-        task.wait(CONFIG.ClickDelay)
+        if CONFIG.ClickDelay > 0 then
+            task.wait(CONFIG.ClickDelay)
+        else
+            task.wait() -- next frame: fastest stable rate
+        end
     end
 end)
 
@@ -415,7 +419,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "SWORD LOOT MONARCH v0.1.0"
+    sub.Text = "SWORD LOOT MONARCH v0.1.1"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
@@ -682,7 +686,7 @@ local function buildUI()
             for _ = 1, CONFIG.Burst do
                 if not alive then break end
                 pcall(fireMapped, CONFIG.ClickRemote, CONFIG.ClickArgs)
-                task.wait(0.05)
+                task.wait()
             end
         end)
     end)
