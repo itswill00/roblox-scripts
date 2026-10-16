@@ -1,4 +1,4 @@
--- NullShight NetLens // v1.2.1 -- RemoteSpy
+-- NullShight NetLens // v1.2.2 -- RemoteSpy
 -- A precise, low-footprint network lens: logs RemoteEvent/RemoteFunction
 -- traffic, coalesces duplicates, and generates paste-ready call snippets.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -20,7 +20,7 @@ local CONFIG = {
     SnipDepth = 3,         -- table depth in generated snippets
     SnipKeys = 8,          -- max table keys in generated snippets
     StrLen = 120,          -- truncate long strings in previews
-    LogOwn = false,          -- true = also log this executor's own calls
+    LogOwn = true,           -- false = hide this executor's own calls
     AntiAfk = true,
 }
 
@@ -264,7 +264,7 @@ local seqNum = 0
 local function statsText()
     local n = 0
     for _ in pairs(remoteSet) do n = n + 1 end
-    return "NETLENS v1.2.1  |  " .. tostring(n) .. " remotes  |  " ..
+    return "NETLENS v1.2.2  |  " .. tostring(n) .. " remotes  |  " ..
         tostring(totalCalls) .. " calls  |  " .. hookInfo
 end
 
@@ -519,31 +519,45 @@ pcall(function()
         pcall(logCall, self, method, args)
     end
     if hasHookFn then
-        local probeE = Instance.new("RemoteEvent")
-        local probeF = Instance.new("RemoteFunction")
-        oldEvent = hookfunction(probeE.FireServer, wrap(function(self, ...)
-            handle("FireServer", self, { ... })
-            return oldEvent(self, ...)
-        end))
-        oldFunc = hookfunction(probeF.InvokeServer, wrap(function(self, ...)
-            handle("InvokeServer", self, { ... })
-            return oldFunc(self, ...)
-        end))
-        pcall(function() probeE:Destroy() end)
-        pcall(function() probeF:Destroy() end)
-        hookMode = "hookfunction"
-    elseif hasHookMM then
-        oldNC = hookmetamethod(game, "__namecall", wrap(function(self, ...)
-            local method = ""
-            pcall(function()
-                if type(getnamecallmethod) == "function" then
-                    method = getnamecallmethod()
-                end
-            end)
-            handle(method, self, { ... })
-            return oldNC(self, ...)
-        end))
-        hookMode = "namecall"
+        pcall(function()
+            local probeE = Instance.new("RemoteEvent")
+            local probeF = Instance.new("RemoteFunction")
+            local ev = hookfunction(probeE.FireServer, wrap(function(self, ...)
+                handle("FireServer", self, { ... })
+                return oldEvent(self, ...)
+            end))
+            local fn = hookfunction(probeF.InvokeServer, wrap(function(self, ...)
+                handle("InvokeServer", self, { ... })
+                return oldFunc(self, ...)
+            end))
+            pcall(function() probeE:Destroy() end)
+            pcall(function() probeF:Destroy() end)
+            -- Both originals must be real: a half-install would break
+            -- every remote in the game, so fall through instead.
+            if ev ~= nil and fn ~= nil then
+                oldEvent, oldFunc = ev, fn
+                hookMode = "hookfunction"
+            end
+        end)
+    end
+    if hookMode == "none" and hasHookMM then
+        pcall(function()
+            local nc = hookmetamethod(game, "__namecall",
+                wrap(function(self, ...)
+                local method = ""
+                pcall(function()
+                    if type(getnamecallmethod) == "function" then
+                        method = getnamecallmethod()
+                    end
+                end)
+                handle(method, self, { ... })
+                return oldNC(self, ...)
+            end))
+            if nc ~= nil then
+                oldNC = nc
+                hookMode = "namecall"
+            end
+        end)
     end
 end)
 
@@ -838,7 +852,7 @@ local function buildUI()
             t:Destroy()
         end)
         task.delay(0.5, function()
-            note("seen=" .. tostring(ncTotal) ..
+            note("mode=" .. hookMode .. " seen=" .. tostring(ncTotal) ..
                 " logged=" .. tostring(totalCalls))
         end)
     end)
@@ -940,7 +954,7 @@ local function buildUI()
         end))
     end
     local filterBox = Instance.new("TextBox")
-    filterBox.Size = UDim2.new(0, 300, 0, 32)
+    filterBox.Size = UDim2.new(0, 232, 0, 32)
     filterBox.Position = UDim2.new(0, 0, 0, 38)
     filterBox.BackgroundColor3 = CARD
     filterBox.BorderSizePixel = 0
@@ -965,10 +979,12 @@ local function buildUI()
             end)
         end
     end))
-    miniToggle(308, 150, "Merge", state.merge,
+    miniToggle(240, 120, "Merge", state.merge,
         function(v) state.merge = v end)
-    miniToggle(466, 150, "Args", state.argsOnly,
+    miniToggle(368, 120, "Args", state.argsOnly,
         function(v) state.argsOnly = v end)
+    miniToggle(496, 120, "Own", CONFIG.LogOwn,
+        function(v) CONFIG.LogOwn = v end)
 
     local scroll = Instance.new("ScrollingFrame")
     scroll.Size = UDim2.new(1, -24, 0, 140)
