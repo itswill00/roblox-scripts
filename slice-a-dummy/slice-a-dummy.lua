@@ -103,9 +103,39 @@ local function clickDummy()
     return ok
 end
 
+-- SlashRequest mapped 2026-10-16: FireServer(dummyModel, 2).
+-- SlashFinished mapped 2026-10-16: FireServer(true, 2).
+-- The dummy model is resolved live; trailing args sent as observed.
+local slashPower = 2
 local swingRemote = findRemote(CONFIG.SwingRemote)
+local finishRemote = findRemote("SlashRemotes.SlashFinished")
 if CONFIG.SwingRemote and not swingRemote then
     note("Swing remote not found, using tool/click fallback")
+end
+local function fireSlash()
+    if not swingRemote then return false end
+    local folder = workspace:FindFirstChild("DummyFolder")
+    if not folder then return false end
+    local dummy = folder:FindFirstChild("DummyModel") or
+        folder:FindFirstChildOfClass("Model")
+    if not dummy then return false end
+    local ok = pcall(function()
+        if swingRemote:IsA("RemoteEvent") then
+            swingRemote:FireServer(dummy, slashPower)
+        else
+            swingRemote:InvokeServer(dummy, slashPower)
+        end
+    end)
+    if ok and finishRemote then
+        pcall(function()
+            if finishRemote:IsA("RemoteEvent") then
+                finishRemote:FireServer(true, slashPower)
+            else
+                finishRemote:InvokeServer(true, slashPower)
+            end
+        end)
+    end
+    return ok
 end
 
 note("NullShight Slice loaded. AutoSwing " ..
@@ -113,16 +143,7 @@ note("NullShight Slice loaded. AutoSwing " ..
 
 task.spawn(function()
     while CONFIG.AutoSwing do
-        local fired = false
-        if swingRemote then
-            fired = pcall(function()
-                if swingRemote:IsA("RemoteEvent") then
-                    swingRemote:FireServer()
-                else
-                    swingRemote:InvokeServer()
-                end
-            end)
-        end
+        local fired = fireSlash()
         if not fired then
             fired = swingTool() or clickDummy()
         end
