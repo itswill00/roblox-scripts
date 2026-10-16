@@ -1,9 +1,11 @@
--- NullShight NetLens // v1.0.1 -- RemoteSpy
+-- NullShight NetLens // v1.1.0 -- RemoteSpy
 -- A precise, low-footprint network lens: logs RemoteEvent/RemoteFunction
 -- traffic, coalesces duplicates, and generates paste-ready call snippets.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
 --
--- Stealth notes (honest): single __namecallmethod hook, restored on unload.
+-- Stealth notes (honest): hookfunction on the FireServer/InvokeServer
+-- closures (primary) or a single __namecall hook (fallback), restored
+-- on unload.
 -- No polling loops, no getconnections tampering, no globals except one
 -- generation counter, discreet GUI names. Nothing is 100% undetectable
 -- against a determined server-side anti-cheat -- use on alt accounts.
@@ -18,6 +20,7 @@ local CONFIG = {
     SnipDepth = 3,         -- table depth in generated snippets
     SnipKeys = 8,          -- max table keys in generated snippets
     StrLen = 120,          -- truncate long strings in previews
+    LogOwn = false,          -- true = also log this executor's own calls
     AntiAfk = true,
 }
 
@@ -69,13 +72,22 @@ local function note(msg)
     end)
 end
 
-local oldNC = nil
+local oldNC, oldEvent, oldFunc = nil, nil, nil
+local hookMode = "none"
 local function unload(quiet)
     if not alive then return end
     alive = false
     pcall(function()
-        if type(hookmetamethod) == "function" and oldNC then
-            hookmetamethod(game, "__namecallmethod", oldNC)
+        if hookMode == "hookfunction" and type(hookfunction) == "function" then
+            local probeE = Instance.new("RemoteEvent")
+            local probeF = Instance.new("RemoteFunction")
+            if oldEvent then hookfunction(probeE.FireServer, oldEvent) end
+            if oldFunc then hookfunction(probeF.InvokeServer, oldFunc) end
+            pcall(function() probeE:Destroy() end)
+            pcall(function() probeF:Destroy() end)
+        elseif hookMode == "namecall" and type(hookmetamethod) == "function"
+            and oldNC then
+            hookmetamethod(game, "__namecall", oldNC)
         end
     end)
     for _, c in ipairs(conns) do
@@ -249,7 +261,7 @@ local subLabel = nil
 local function statsText()
     local n = 0
     for _ in pairs(remoteSet) do n = n + 1 end
-    return "NETLENS v1.0.1  |  " .. tostring(n) .. " remotes  |  " ..
+    return "NETLENS v1.1.0  |  " .. tostring(n) .. " remotes  |  " ..
         tostring(totalCalls) .. " calls"
 end
 
@@ -259,7 +271,7 @@ local function refreshStats()
     end
     if statusLabel then
         pcall(function()
-            statusLabel.Text = hookInfo .. "  |  namecalls seen: " ..
+            statusLabel.Text = hookInfo .. "  |  remotes seen: " ..
                 tostring(ncTotal)
         end)
     end
@@ -448,32 +460,62 @@ local function logCall(inst, method, args)
     refreshStats()
 end
 
--- The hook: single interception point, everything else passes through.
-local hasHook = type(hookmetamethod) == "function"
+-- Hooks (SimpleSpy-proven recipe):
+--   1. hookfunction on the real FireServer/InvokeServer C closures
+--      (via a sacrificial instance). Catches every call, no
+--      getnamecallmethod needed. Primary.
+--   2. Fallback: hookmetamethod(game, "__namecall", ...) -- note the name
+--      is __namecall, NOT __namecallmethod (wrong name = dead silent hook).
+-- Only one path is ever installed, so nothing is logged twice.
+-- checkcaller filter keeps our own scripts out of the log by default.
+local hasHookFn = type(hookfunction) == "function"
+local hasHookMM = type(hookmetamethod) == "function"
 local hasGNM = type(getnamecallmethod) == "function"
 pcall(function()
-    if not hasHook then return end
     local wrap = newcclosure or function(f) return f end
-    oldNC = hookmetamethod(game, "__namecallmethod", wrap(function(self, ...)
-        ncTotal = ncTotal + 1
-        local method = ""
-        pcall(function()
-            if type(getnamecallmethod) == "function" then
-                method = getnamecallmethod()
-            end
-        end)
-        if method == "FireServer" or method == "InvokeServer" then
-            local okClass = false
-            pcall(function()
-                okClass = self:IsA("RemoteEvent") or self:IsA("RemoteFunction")
-            end)
-            if okClass then
-                pcall(logCall, self, method, { ... })
-            end
+    local function handle(method, self, args)
+        if method ~= "FireServer" and method ~= "InvokeServer" then
+            return
         end
-        return oldNC(self, ...)
-    end))
-    if oldNC == nil then oldNC = nil end
+        local okClass = false
+        pcall(function()
+            okClass = self:IsA("RemoteEvent") or self:IsA("RemoteFunction")
+        end)
+        if not okClass then return end
+        ncTotal = ncTotal + 1
+        if not CONFIG.LogOwn and type(checkcaller) == "function" then
+            local okC, isOurs = pcall(checkcaller)
+            if okC and isOurs then return end
+        end
+        pcall(logCall, self, method, args)
+    end
+    if hasHookFn then
+        local probeE = Instance.new("RemoteEvent")
+        local probeF = Instance.new("RemoteFunction")
+        oldEvent = hookfunction(probeE.FireServer, wrap(function(self, ...)
+            handle("FireServer", self, { ... })
+            return oldEvent(self, ...)
+        end))
+        oldFunc = hookfunction(probeF.InvokeServer, wrap(function(self, ...)
+            handle("InvokeServer", self, { ... })
+            return oldFunc(self, ...)
+        end))
+        pcall(function() probeE:Destroy() end)
+        pcall(function() probeF:Destroy() end)
+        hookMode = "hookfunction"
+    elseif hasHookMM then
+        oldNC = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+            local method = ""
+            pcall(function()
+                if type(getnamecallmethod) == "function" then
+                    method = getnamecallmethod()
+                end
+            end)
+            handle(method, self, { ... })
+            return oldNC(self, ...)
+        end))
+        hookMode = "namecall"
+    end
 end)
 
 -- UI (Fluent-style, landscape, grab-anywhere).
@@ -935,12 +977,12 @@ task.spawn(function()
     end
 end)
 
-if oldNC == nil then
-    hookInfo = "HOOK FAILED (hookmetamethod missing or rejected)"
+if hookMode == "none" then
+    hookInfo = "HOOK FAILED (no hookfunction/hookmetamethod)"
     note("Hook failed on this executor")
 else
-    hookInfo = "hook:OK gnm:" .. (hasGNM and "OK" or "MISSING")
-    note("NetLens armed. Do an action in-game.")
+    hookInfo = "hook:" .. hookMode .. " gnm:" .. (hasGNM and "OK" or "MISSING")
+    note("NetLens armed (" .. hookMode .. "). Do an action in-game.")
 end
 
 return true
