@@ -1,4 +1,4 @@
--- NullShight NetLens // v1.2.3 -- RemoteSpy
+-- NullShight NetLens // v1.2.4 -- RemoteSpy
 -- A precise, low-footprint network lens: logs RemoteEvent/RemoteFunction
 -- traffic, coalesces duplicates, and generates paste-ready call snippets.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -72,7 +72,7 @@ local function note(msg)
     end)
 end
 
-local oldNC, oldEvent, oldFunc = nil, nil, nil
+local oldNC, oldEvent, oldFunc, oldRaw, rawMT = nil, nil, nil, nil, nil
 local hookMode = "none"
 local function unload(quiet)
     if not alive then return end
@@ -88,6 +88,9 @@ local function unload(quiet)
         elseif hookMode == "namecall" and type(hookmetamethod) == "function"
             and oldNC then
             hookmetamethod(game, "__namecall", oldNC)
+        elseif hookMode == "rawnamecall" and type(hookfunction) == "function"
+            and rawMT and oldRaw then
+            hookfunction(rawMT.__namecall, oldRaw)
         end
     end)
     for _, c in ipairs(conns) do
@@ -264,7 +267,7 @@ local seqNum = 0
 local function statsText()
     local n = 0
     for _ in pairs(remoteSet) do n = n + 1 end
-    return "NETLENS v1.2.3  |  " .. tostring(n) .. " remotes  |  " ..
+    return "NETLENS v1.2.4  |  " .. tostring(n) .. " remotes  |  " ..
         tostring(totalCalls) .. " calls  |  " .. hookInfo
 end
 
@@ -499,13 +502,14 @@ end
 -- checkcaller filter keeps our own scripts out of the log by default.
 local hasHookFn = type(hookfunction) == "function"
 local hasHookMM = type(hookmetamethod) == "function"
+local hasRawMT = type(getrawmetatable) == "function"
 local hasGNM = type(getnamecallmethod) == "function"
 pcall(function()
     local wrap = newcclosure or function(f) return f end
     local function handle(method, self, args)
-        if method ~= "FireServer" and method ~= "InvokeServer" then
-            return
-        end
+        local m = string.lower(tostring(method or ""))
+        if m ~= "fireserver" and m ~= "invokeserver" then return end
+        method = (m == "fireserver") and "FireServer" or "InvokeServer"
         local okClass = false
         pcall(function()
             okClass = self:IsA("RemoteEvent") or self:IsA("RemoteFunction")
@@ -537,6 +541,28 @@ pcall(function()
             if ev ~= nil and fn ~= nil then
                 oldEvent, oldFunc = ev, fn
                 hookMode = "hookfunction"
+            end
+        end)
+    end
+    if hookMode == "none" and hasHookFn and hasRawMT then
+        pcall(function()
+            local mt = getrawmetatable(game)
+            if type(mt) ~= "table" or type(mt.__namecall) ~= "function" then
+                return
+            end
+            local nc = hookfunction(mt.__namecall, wrap(function(self, ...)
+                local method = ""
+                pcall(function()
+                    if type(getnamecallmethod) == "function" then
+                        method = getnamecallmethod()
+                    end
+                end)
+                handle(method, self, { ... })
+                return oldRaw(self, ...)
+            end))
+            if nc ~= nil then
+                rawMT, oldRaw = mt, nc
+                hookMode = "rawnamecall"
             end
         end)
     end
