@@ -1,4 +1,4 @@
--- NullShight Sword Loot Monarch // v0.1.3
+-- NullShight Sword Loot Monarch // v0.1.4
 -- Game: +1 Sword Loot Monarch (93239606899307). Clicker loop: click for
 -- power, train, clear stages, loot, forge swords, rebirth.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -16,12 +16,12 @@ local CONFIG = {
     Burst = 50,                          -- CLICK x50 burst count
     TrainRemote = nil,                   -- fill after mapping
     TrainArgs = {},
-    StageRemote = nil,                   -- fill after mapping (farm/attack)
-    StageArgs = {},
+    StageRemote = "Remotes.MainEvent",     -- stage select, mapped 2026-10-16
+    StageArgs = { 151, "d7" },           -- 2nd arg = stage id, update as you progress
     RebirthRemote = "Remotes.MainFunction", -- InvokeServer, mapped 2026-10-16
     RebirthArgs = { 173 },
-    CollectRemote = "Remotes.MainEvent",   -- guess: pickup, mapped 2026-10-16
-    CollectArgs = { 40, 1 },
+    CollectRemote = nil,                 -- (40,1) was wrong, unmapped
+    CollectArgs = {},
     AutoTrain = false,                   -- on once TrainRemote mapped
     TrainDelay = 2,
     AutoStage = false,                   -- on once StageRemote mapped
@@ -419,7 +419,7 @@ local function buildUI()
     sub.TextSize = 10
     sub.TextXAlignment = Enum.TextXAlignment.Left
     sub.TextColor3 = DIM
-    sub.Text = "SWORD LOOT MONARCH v0.1.3"
+    sub.Text = "SWORD LOOT MONARCH v0.1.4"
     sub.Parent = head
 
     local mini = Instance.new("TextButton")
