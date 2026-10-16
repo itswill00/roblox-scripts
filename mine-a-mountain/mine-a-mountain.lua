@@ -29,6 +29,27 @@ local CONFIG = {
     MinValue = 0,          -- filter ESP + target (0 = semua)
     EspMax = 40,           -- cap billboard biar HP kentang aman
     EspRefresh = 2,        -- detik antar refresh ESP
+    ESPMaxDist = 0,        -- cull jarak ESP (studs, 0 = tanpa batas)
+    ESPPerTier = 5,        -- label termahal per tier (0 = semua, rawan lag)
+    ESPShowLowest = true,  -- tandai 1 termurah per tier (tag LOW)
+    -- Kategori tier: true = tampil, false = disembunyiin. Warna bebas ganti.
+    ESPShowTier = {
+        Common = false,
+        Uncommon = true,
+        Rare = true,
+        Epic = true,
+        Legendary = true,
+        Mythic = true,
+    },
+    TierColors = {
+        Common = Color3.fromRGB(170, 170, 170),
+        Uncommon = Color3.fromRGB(110, 255, 130),
+        Rare = Color3.fromRGB(110, 180, 255),
+        Epic = Color3.fromRGB(200, 130, 255),
+        Legendary = Color3.fromRGB(255, 190, 90),
+        Mythic = Color3.fromRGB(255, 100, 120),
+        Unknown = Color3.fromRGB(235, 235, 240),
+    },
     AntiAfk = true,
     FpsBoost = false,
 }
@@ -43,6 +64,7 @@ local state = {
     autoCollect = CONFIG.AutoCollect,
     autoSell = CONFIG.AutoSell,
     oreESP = CONFIG.OreESP,
+    showLowest = CONFIG.ESPShowLowest,
 }
 
 -- Unload registry: semua koneksi + loop cek ini. Reload dua kali aman.
@@ -84,6 +106,8 @@ local function unload(quiet)
         local root = (gethui and gethui()) or game:GetService("CoreGui")
         local g = root:FindFirstChild("NullShightMine")
         if g then g:Destroy() end
+        local e = root:FindFirstChild("NullShightMineESP")
+        if e then e:Destroy() end
     end)
     if not quiet then note("NullShight unloaded") end
 end
@@ -338,7 +362,32 @@ task.spawn(function()
     end
 end)
 
--- ESP: billboard nama + value di crystal, di-cap biar enteng.
+-- ESP per-tier + anti-lag:
+--   * Label dikelompokkan per tier (warna beda tiap tier, atur di CONFIG).
+--   * Per tier tampil yang termahal (ESPPerTier) + 1 termurah (tag LOW).
+--   * Billboard dipakai ulang dari pool (nol create/destroy per refresh).
+--   * Cull jarak opsional (ESPMaxDist), scan cuma tiap EspRefresh detik.
+local TIER_NAMES = { "Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic" }
+local TIER_ORDER = { "Mythic", "Legendary", "Epic", "Rare", "Uncommon", "Common", "Unknown" }
+
+local function tierOf(inst)
+    local ok, name = pcall(inst.GetAttribute, inst, "TierName")
+    if ok and type(name) == "string" and name ~= "" then return name end
+    local ok2, t = pcall(inst.GetAttribute, inst, "Tier")
+    t = tonumber(t) or 0
+    if TIER_NAMES[t] then return TIER_NAMES[t] end
+    return "Unknown"
+end
+
+local function crystalLabel(inst)
+    local nm = inst.Name
+    pcall(function()
+        local cn = inst:GetAttribute("CrystalName")
+        if type(cn) == "string" and cn ~= "" then nm = cn end
+    end)
+    return nm
+end
+
 local espFolder = nil
 pcall(function()
     local root = (gethui and gethui()) or game:GetService("CoreGui")
@@ -347,67 +396,121 @@ pcall(function()
     espFolder.Parent = root
 end)
 
-local function clearESP()
-    if espFolder then
-        for _, c in ipairs(espFolder:GetChildren()) do
-            pcall(function() c:Destroy() end)
-        end
+local espPool = {}
+local function getBB(i)
+    local bb = espPool[i]
+    if bb and bb.Parent then
+        bb.Visible = true
+        return bb
+    end
+    bb = Instance.new("BillboardGui")
+    bb.Size = UDim2.new(0, 130, 0, 40)
+    bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.AlwaysOnTop = true
+    local tl = Instance.new("TextLabel")
+    tl.Name = "L"
+    tl.Size = UDim2.new(1, 0, 1, 0)
+    tl.BackgroundTransparency = 1
+    tl.Font = Enum.Font.Code
+    tl.TextSize = 13
+    tl.TextStrokeTransparency = 0.3
+    tl.Parent = bb
+    bb.Parent = espFolder
+    espPool[i] = bb
+    return bb
+end
+
+local function hideESP()
+    for _, bb in ipairs(espPool) do
+        pcall(function() bb.Visible = false end)
     end
 end
 
+local function clearESP()
+    hideESP()
+end
+
 local function paintESP()
-    clearESP()
     if not espFolder then return end
     local root = getRoot()
-    if not root then return end
-    local list = {}
+    if not root then hideESP() return end
+    local showTier = CONFIG.ESPShowTier or {}
+    local perTier = CONFIG.ESPPerTier or 5
+    local maxDist = CONFIG.ESPMaxDist or 0
+
+    -- 1x scan: kelompokkan per tier.
+    local groups = {}
     for _, cname in ipairs(CONFIG.CrystalContainers) do
         local c = workspace:FindFirstChild(cname)
         if c then
             for _, inst in ipairs(c:GetChildren()) do
                 local ok, v = pcall(inst.GetAttribute, inst, "Value")
-                if ok and tonumber(v) and tonumber(v) >= CONFIG.MinValue then
-                    list[#list + 1] = inst
+                v = ok and tonumber(v) or nil
+                if v and v >= CONFIG.MinValue then
+                    local tier = tierOf(inst)
+                    if showTier[tier] ~= false then
+                        if maxDist <= 0 then
+                            local g = groups[tier]
+                            if not g then g = {}; groups[tier] = g end
+                            g[#g + 1] = inst
+                        else
+                            local pos = targetPos(inst)
+                            if pos and (pos - root.Position).Magnitude <= maxDist then
+                                local g = groups[tier]
+                                if not g then g = {}; groups[tier] = g end
+                                g[#g + 1] = inst
+                            end
+                        end
+                    end
                 end
             end
         end
     end
-    table.sort(list, function(a, b)
-        local ra = getRoot()
-        if not ra then return false end
-        local pa, pb = targetPos(a), targetPos(b)
-        if not pa then return false end
-        if not pb then return true end
-        return (pa - ra.Position).Magnitude < (pb - ra.Position).Magnitude
-    end)
-    for i = 1, math.min(#list, CONFIG.EspMax) do
-        local inst = list[i]
-        local adorn = inst:IsA("BasePart") and inst
-            or inst:FindFirstChildWhichIsA("BasePart", true)
-        if adorn then
-            pcall(function()
-                local bb = Instance.new("BillboardGui")
-                bb.Size = UDim2.new(0, 120, 0, 36)
-                bb.StudsOffset = Vector3.new(0, 3, 0)
-                bb.AlwaysOnTop = true
-                local tl = Instance.new("TextLabel")
-                tl.Size = UDim2.new(1, 0, 1, 0)
-                tl.BackgroundTransparency = 1
-                tl.Font = Enum.Font.Code
-                tl.TextSize = 13
-                tl.TextColor3 = Color3.fromRGB(120, 255, 140)
-                tl.TextStrokeTransparency = 0.3
-                local nm = inst.Name
-                pcall(function()
-                    local cn = inst:GetAttribute("CrystalName")
-                    if type(cn) == "string" and cn ~= "" then nm = cn end
-                end)
-                tl.Text = nm .. "\n$" .. shortNum(attrNum(inst, "Value"))
-                tl.Parent = bb
-                bb.Parent = espFolder
-                bb.Adornee = adorn
+
+    -- Termahal dulu per tier + termurah (urutan tier sultan duluan).
+    local idx = 0
+    for _, tier in ipairs(TIER_ORDER) do
+        local g = groups[tier]
+        if g and #g > 0 then
+            table.sort(g, function(a, b)
+                return attrNum(a, "Value") > attrNum(b, "Value")
             end)
+            local color = (CONFIG.TierColors or {})[tier]
+                or Color3.fromRGB(235, 235, 240)
+            local n = perTier <= 0 and #g or math.min(#g, perTier)
+            for i = 1, n do
+                if idx >= CONFIG.EspMax then break end
+                idx = idx + 1
+                local inst = g[i]
+                local adorn = inst:IsA("BasePart") and inst
+                    or inst:FindFirstChildWhichIsA("BasePart", true)
+                if adorn then
+                    local bb = getBB(idx)
+                    bb.Adornee = adorn
+                    local tag = (i == 1) and "[TOP] " or ("#" .. tostring(i) .. " ")
+                    bb.L.Text = tag .. tier .. "\n" .. crystalLabel(inst)
+                        .. " $" .. shortNum(attrNum(inst, "Value"))
+                    bb.L.TextColor3 = color
+                end
+            end
+            if state.showLowest and #g > n and idx < CONFIG.EspMax then
+                local inst = g[#g]
+                local adorn = inst:IsA("BasePart") and inst
+                    or inst:FindFirstChildWhichIsA("BasePart", true)
+                if adorn then
+                    idx = idx + 1
+                    local bb = getBB(idx)
+                    bb.Adornee = adorn
+                    bb.L.Text = "[LOW] " .. tier .. "\n" .. crystalLabel(inst)
+                        .. " $" .. shortNum(attrNum(inst, "Value"))
+                    bb.L.TextColor3 = Color3.fromRGB(140, 140, 150)
+                end
+            end
         end
+        if idx >= CONFIG.EspMax then break end
+    end
+    for i = idx + 1, #espPool do
+        pcall(function() espPool[i].Visible = false end)
     end
 end
 
@@ -415,8 +518,8 @@ task.spawn(function()
     while alive do
         if state.oreESP then
             pcall(paintESP)
-        elseif espFolder and #espFolder:GetChildren() > 0 then
-            clearESP()
+        else
+            hideESP()
         end
         task.wait(CONFIG.EspRefresh)
     end
@@ -508,7 +611,7 @@ local function buildUI()
 
     local main = Instance.new("Frame")
     main.Name = "Panel"
-    main.Size = UDim2.new(0, 230, 0, 268)
+    main.Size = UDim2.new(0, 230, 0, 304)
     main.Position = UDim2.new(0, 16, 0, 120)
     main.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
     main.BorderColor3 = Color3.fromRGB(120, 120, 128)
@@ -550,7 +653,7 @@ local function buildUI()
         collapsed = not collapsed
         body.Visible = not collapsed
         main.Size = collapsed and UDim2.new(0, 230, 0, 30)
-            or UDim2.new(0, 230, 0, 268)
+            or UDim2.new(0, 230, 0, 304)
         mini.Text = collapsed and "+" or "_"
     end))
 
@@ -612,6 +715,32 @@ local function buildUI()
         state.oreESP = v
         if not v then clearESP() end
     end)
+    row("ESP Termurah", state.showLowest, function(v) state.showLowest = v end)
+
+    local lagBtn = Instance.new("TextButton")
+    lagBtn.Size = UDim2.new(1, -16, 0, 30)
+    lagBtn.Position = UDim2.new(0, 8, 0, y)
+    lagBtn.BackgroundColor3 = Color3.fromRGB(28, 30, 38)
+    lagBtn.BorderColor3 = Color3.fromRGB(90, 90, 100)
+    lagBtn.BorderSizePixel = 1
+    lagBtn.Font = Enum.Font.Code
+    lagBtn.TextSize = 12
+    lagBtn.TextColor3 = Color3.fromRGB(235, 235, 240)
+    lagBtn.Text = "FIX LAG"
+    lagBtn.Parent = body
+    y = y + 36
+    track(lagBtn.MouseButton1Click:Connect(function()
+        -- Sapu visual berat + ringankan beban skrip. Permanen sampai
+        -- skrip di-reload ulang (run loadstring lagi).
+        pcall(fpsBoost)
+        CONFIG.EspMax = 15
+        CONFIG.EspRefresh = 4
+        CONFIG.ESPPerTier = 2
+        CONFIG.ESPMaxDist = 1500
+        CONFIG.Burst = 2
+        clearESP()
+        note("Lag fix applied")
+    end))
 
     local sellBtn = Instance.new("TextButton")
     sellBtn.Size = UDim2.new(1, -16, 0, 30)
