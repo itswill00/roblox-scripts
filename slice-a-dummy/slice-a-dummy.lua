@@ -1,18 +1,21 @@
--- NullShight Slice A Dummy! // v0.2.1
+-- NullShight Slice A Dummy! // v0.3.0
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
--- Game-specific remote names live in CONFIG below: fill them from a live
--- mapping run (see README), everything else already works generically.
+-- Land every hit for the user: tap the big slice button is never needed.
+--
+-- Mapped live 2026-10-16 (profit RemoteSpy):
+--   SlashRemotes.SwingCompleted:FireServer(1)   -- damage lands here
+-- Remote names live in CONFIG; only CONFIG changes on a game update.
 
 local CONFIG = {
-    -- RemoteEvent/RemoteFunction names, mapped per game update. Find them
-    -- with Dex/SimpleSpy while swinging once, then paste here.
-    SwingRemote = "SlashRemotes.SlashRequest", -- mapped 2026-10-16
-    SwingCompletedRemote = "SlashRemotes.SwingCompleted", -- FireServer(1)
+    SwingRemote = "SlashRemotes.SlashRequest",   -- swing request
+    SwingCompletedRemote = "SlashRemotes.SwingCompleted", -- damage call
     SwingCompletedArgs = { 1 },
-    RebirthRemote = nil,    -- e.g. "RebirthEvent"
-    EggRemote = nil,        -- e.g. "HatchEgg"
+    RebirthRemote = nil,   -- fill after mapping
+    EggRemote = nil,       -- fill after mapping
     AutoSwing = true,
-    SwingDelay = 0.15,      -- seconds between attempts
+    SwingDelay = 0.15,     -- seconds between attempts
+    Turbo = false,         -- 0 delay between attempts
+    Burst = 50,            -- TAP x50 burst count
     AntiAfk = true,
     FpsBoost = false,
 }
@@ -22,9 +25,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 local LocalPlayer = Players.LocalPlayer
 
--- Unload registry: every connection and loop checks in here so one call
--- tears the whole script down cleanly. Reloading twice never stacks.
+-- Generation guard: a fresh run kills the previous run's loops, so
+-- re-running the loadstring never stacks duplicate swing loops.
 local alive = true
+_G.NSSD_Gen = ((_G.NSSD_Gen or 0) + 1)
+local myGen = _G.NSSD_Gen
+
 local conns = {}
 local function track(c)
     conns[#conns + 1] = c
@@ -32,9 +38,18 @@ local function track(c)
 end
 do
     pcall(function()
-        local root = (gethui and gethui()) or game:GetService("CoreGui")
-        local old = root:FindFirstChild("NullShightSlice")
-        if old then old:Destroy() end
+        local roots = {}
+        local ok, h = pcall(function() return gethui and gethui() end)
+        if ok and h then roots[#roots + 1] = h end
+        roots[#roots + 1] = game:GetService("CoreGui")
+        local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if pg then roots[#roots + 1] = pg end
+        for _, r in ipairs(roots) do
+            for _, n in ipairs({ "NullShightSlice", "SliceEmblem" }) do
+                local o = r:FindFirstChild(n)
+                if o then pcall(function() o:Destroy() end) end
+            end
+        end
     end)
 end
 
@@ -46,9 +61,16 @@ local function unload(quiet)
         pcall(function() c:Disconnect() end)
     end
     pcall(function()
-        local root = (gethui and gethui()) or game:GetService("CoreGui")
-        local g = root:FindFirstChild("NullShightSlice")
-        if g then g:Destroy() end
+        local roots = {}
+        local ok, h = pcall(function() return gethui and gethui() end)
+        if ok and h then roots[#roots + 1] = h end
+        roots[#roots + 1] = game:GetService("CoreGui")
+        for _, r in ipairs(roots) do
+            for _, n in ipairs({ "NullShightSlice", "SliceEmblem" }) do
+                local g = r:FindFirstChild(n)
+                if g then pcall(function() g:Destroy() end) end
+            end
+        end
     end)
     if not quiet then note("NullShight unloaded") end
 end
@@ -161,33 +183,77 @@ end
 
 local state = {
     autoSwing = CONFIG.AutoSwing,
+    turbo = CONFIG.Turbo,
 }
+
+local function doBurst()
+    task.spawn(function()
+        for _ = 1, CONFIG.Burst do
+            if not alive or _G.NSSD_Gen ~= myGen then break end
+            if not fireSlash() then
+                local ok = swingTool()
+                if not ok then clickDummy() end
+            end
+            task.wait()
+        end
+    end)
+end
 
 note("NullShight Slice loaded. AutoSwing " ..
     (state.autoSwing and "ON" or "OFF"))
 
 task.spawn(function()
-    while alive do
+    while alive and _G.NSSD_Gen == myGen do
         if state.autoSwing then
             local fired = fireSlash()
             if not fired then
                 fired = swingTool() or clickDummy()
             end
         end
-        task.wait(CONFIG.SwingDelay)
+        if state.turbo then
+            task.wait()
+        else
+            task.wait(CONFIG.SwingDelay)
+        end
     end
 end)
 
--- Monochrome compact panel. Touch-first: big tap targets, draggable
--- title bar, collapsible to a pill. No external UI libs needed.
--- Draggable circular NS emblem: tap toggles the panel, drag moves it.
--- Mirrors the MLBB floating emblem, drawn with pure UI (no asset upload).
+-- UI v2: Fluent-style landscape tabs, toggle switches, grab-anywhere
+-- drag, bright NS emblem. Pure Instance API, no external libs.
+local TweenService = game:GetService("TweenService")
+
+local ACCENT = Color3.fromRGB(255, 170, 130)
+local CARD = Color3.fromRGB(24, 27, 36)
+local CARD2 = Color3.fromRGB(30, 34, 46)
+local INK = Color3.fromRGB(235, 235, 242)
+local DIM = Color3.fromRGB(150, 155, 175)
+
+local function tw(obj, props, dur, style, dir)
+    local t = TweenService:Create(obj,
+        TweenInfo.new(dur or 0.22, style or Enum.EasingStyle.Quart,
+            dir or Enum.EasingDirection.Out), props)
+    t:Play()
+    return t
+end
+
+local function round(obj, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r)
+    c.Parent = obj
+end
+
+local function stroke(obj, color, transp)
+    local st = Instance.new("UIStroke")
+    st.Color = color
+    st.Transparency = transp or 0.5
+    st.Thickness = 1
+    st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    st.Parent = obj
+end
+
 local function buildEmblem(parent, panel)
-    -- Touch pad owns all input: 96px grab area, 56px visual on top.
-    -- A fat invisible pad is what makes drags reliable on phones; the
-    -- artwork itself never takes input so nothing swallows the finger.
     local pad = Instance.new("TextButton")
-    pad.Name = "EmblemPad"
+    pad.Name = "SliceEmblem"
     pad.Size = UDim2.new(0, 96, 0, 96)
     pad.Position = UDim2.new(1, -112, 1, -180)
     pad.BackgroundTransparency = 1
@@ -201,20 +267,26 @@ local function buildEmblem(parent, panel)
     emb.Name = "Emblem"
     emb.Size = UDim2.new(0, 56, 0, 56)
     emb.Position = UDim2.new(0.5, -28, 0.5, -28)
-    emb.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
+    emb.BackgroundColor3 = Color3.fromRGB(48, 42, 52)
     emb.BorderSizePixel = 0
     emb.Font = Enum.Font.Code
-    emb.TextSize = 18
-    emb.TextColor3 = Color3.fromRGB(245, 245, 250)
+    emb.TextSize = 20
+    emb.TextColor3 = Color3.fromRGB(255, 255, 255)
+    emb.TextStrokeTransparency = 0.5
     emb.Text = "NS"
     emb.Parent = pad
+    round(emb, 28)
 
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = emb
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(74, 60, 72)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(28, 24, 32)),
+    })
+    grad.Rotation = 35
+    grad.Parent = emb
 
     local ring = Instance.new("UIStroke")
-    ring.Color = Color3.fromRGB(200, 200, 210)
+    ring.Color = Color3.fromRGB(240, 235, 240)
     ring.Thickness = 2
     ring.Parent = emb
 
@@ -226,31 +298,52 @@ local function buildEmblem(parent, panel)
             downPos = input.Position
             startPos = pad.Position
             moved = false
+            tw(emb, { Size = UDim2.new(0, 48, 0, 48),
+                Position = UDim2.new(0.5, -24, 0.5, -24) }, 0.12)
         end
     end))
-    track(pad.InputEnded:Connect(function(input)
+    local function release(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
-            if not moved then
+            tw(emb, { Size = UDim2.new(0, 56, 0, 56),
+                Position = UDim2.new(0.5, -28, 0.5, -28) }, 0.18,
+                Enum.EasingStyle.Back)
+            if not moved and downPos then
                 visible = not visible
-                panel.Visible = visible
-                ring.Color = visible and Color3.fromRGB(245, 245, 250)
+                if visible then
+                    panel.Visible = true
+                    tw(panel, { GroupTransparency = 0 }, 0.22)
+                else
+                    local f = tw(panel, { GroupTransparency = 1 }, 0.18)
+                    pcall(function()
+                        f.Completed:Wait()
+                        if not visible then panel.Visible = false end
+                    end)
+                end
+                ring.Color = visible and Color3.fromRGB(240, 235, 240)
                     or Color3.fromRGB(110, 115, 130)
             end
             downPos = nil
         end
-    end))
+    end
+    track(pad.InputEnded:Connect(release))
     track(game:GetService("UserInputService").InputChanged:Connect(function(input)
         if downPos
             and (input.UserInputType == Enum.UserInputType.MouseMovement
                 or input.UserInputType == Enum.UserInputType.Touch) then
             local d = input.Position - downPos
-            if d.Magnitude > 10 then moved = true end
+            if d.Magnitude > 8 then moved = true end
             if moved then
                 pad.Position = UDim2.new(startPos.X.Scale,
                     startPos.X.Offset + d.X, startPos.Y.Scale,
                     startPos.Y.Offset + d.Y)
             end
+        end
+    end))
+    track(game:GetService("UserInputService").InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            downPos = nil
         end
     end))
 end
@@ -268,162 +361,353 @@ local function buildUI()
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.Parent = parent
 
-    local main = Instance.new("Frame")
+    local PW = 470
+    local main = Instance.new("CanvasGroup")
     main.Name = "Panel"
-    main.Size = UDim2.new(0, 230, 0, 232)
-    main.Position = UDim2.new(0, 16, 0, 120)
-    main.BackgroundColor3 = Color3.fromRGB(14, 16, 20)
-    main.BorderColor3 = Color3.fromRGB(120, 120, 128)
-    main.BorderSizePixel = 1
-    main.Active = true
+    main.Position = UDim2.new(0, 16, 0, 60)
+    main.BackgroundColor3 = Color3.fromRGB(16, 15, 19)
+    main.BorderSizePixel = 0
+    main.ClipsDescendants = true
+    main.GroupTransparency = 1
     main.Parent = gui
+    round(main, 14)
+    stroke(main, Color3.fromRGB(112, 92, 108), 0.4)
+
+    local y = 0
+    local head = Instance.new("TextButton")
+    head.Name = "Head"
+    head.Size = UDim2.new(1, 0, 0, 52)
+    head.BackgroundTransparency = 1
+    head.Text = ""
+    head.AutoButtonColor = false
+    head.Parent = main
+    y = 52
+
+    local badge = Instance.new("TextLabel")
+    badge.Size = UDim2.new(0, 30, 0, 30)
+    badge.Position = UDim2.new(0, 12, 0.5, -15)
+    badge.BackgroundColor3 = Color3.fromRGB(40, 30, 40)
+    badge.BorderSizePixel = 0
+    badge.Font = Enum.Font.Code
+    badge.TextSize = 12
+    badge.TextColor3 = ACCENT
+    badge.Text = "NS"
+    badge.Parent = head
+    round(badge, 9)
+    stroke(badge, ACCENT, 0.45)
 
     local title = Instance.new("TextLabel")
-    title.Name = "Title"
-    title.Size = UDim2.new(1, -34, 0, 30)
-    title.Position = UDim2.new(0, 0, 0, 0)
+    title.Size = UDim2.new(1, -92, 0, 20)
+    title.Position = UDim2.new(0, 50, 0, 7)
     title.BackgroundTransparency = 1
     title.Font = Enum.Font.Code
-    title.TextSize = 13
+    title.TextSize = 14
     title.TextXAlignment = Enum.TextXAlignment.Left
-    title.TextColor3 = Color3.fromRGB(235, 235, 240)
-    title.Text = "  NULLSHIGHT // SLICE"
-    title.Parent = main
+    title.TextColor3 = INK
+    title.Text = "NULLSHIGHT"
+    title.Parent = head
+
+    local sub = Instance.new("TextLabel")
+    sub.Size = UDim2.new(1, -92, 0, 14)
+    sub.Position = UDim2.new(0, 50, 0, 28)
+    sub.BackgroundTransparency = 1
+    sub.Font = Enum.Font.Code
+    sub.TextSize = 10
+    sub.TextXAlignment = Enum.TextXAlignment.Left
+    sub.TextColor3 = DIM
+    sub.Text = "SLICE A DUMMY v0.3.0"
+    sub.Parent = head
 
     local mini = Instance.new("TextButton")
     mini.Size = UDim2.new(0, 30, 0, 30)
-    mini.Position = UDim2.new(1, -30, 0, 0)
-    mini.BackgroundTransparency = 1
+    mini.Position = UDim2.new(1, -40, 0.5, -15)
+    mini.BackgroundColor3 = CARD
+    mini.BorderSizePixel = 0
     mini.Font = Enum.Font.Code
-    mini.TextSize = 14
-    mini.TextColor3 = Color3.fromRGB(160, 160, 170)
-    mini.Text = "_"
-    mini.Parent = main
+    mini.TextSize = 16
+    mini.TextColor3 = DIM
+    mini.Text = "-"
+    mini.AutoButtonColor = false
+    mini.Parent = head
+    round(mini, 9)
+    stroke(mini, Color3.fromRGB(55, 60, 78), 0.55)
 
     local body = Instance.new("Frame")
     body.Name = "Body"
-    body.Size = UDim2.new(1, 0, 1, -30)
-    body.Position = UDim2.new(0, 0, 0, 30)
+    body.Size = UDim2.new(1, 0, 0, 224)
+    body.Position = UDim2.new(0, 0, 0, y)
     body.BackgroundTransparency = 1
+    body.ClipsDescendants = true
     body.Parent = main
+
+    -- Grab-anywhere drag with tap threshold.
+    local function clampPanel()
+        local cam = workspace.CurrentCamera
+        local vs = (cam and cam.ViewportSize) or Vector2.new(800, 600)
+        local p = main.Position
+        local w = main.AbsoluteSize.X
+        local h = main.AbsoluteSize.Y
+        local x = math.max(-w + 80, math.min(p.X.Offset, vs.X - 80))
+        local yy = math.max(-h + 60, math.min(p.Y.Offset, vs.Y - 60))
+        main.Position = UDim2.new(0, x, 0, yy)
+    end
+    local dragging, dragStart, startPos, moved = false, nil, nil, false
+    local function isTouch(input)
+        return input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch
+            or input.UserInputType == Enum.UserInputType.MouseMovement
+    end
+    local function pressBegan(input)
+        if not isTouch(input) or dragging then return end
+        dragging = true
+        moved = false
+        dragStart = input.Position
+        startPos = main.Position
+    end
+    local function pressEnded(input)
+        if not isTouch(input) then return false end
+        if not dragging then return false end
+        dragging = false
+        pcall(clampPanel)
+        return not moved
+    end
+    track(game:GetService("UserInputService").InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement
+            and input.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        local d = input.Position - dragStart
+        if d.Magnitude > 10 then moved = true end
+        if moved then
+            main.Position = UDim2.new(startPos.X.Scale,
+                startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end))
+    track(game:GetService("UserInputService").InputEnded:Connect(function(input)
+        pressEnded(input)
+    end))
+    body.Active = true
+    track(head.InputBegan:Connect(pressBegan))
+    track(head.InputEnded:Connect(pressEnded))
+    track(body.InputBegan:Connect(pressBegan))
+    track(body.InputEnded:Connect(pressEnded))
+
+    -- Horizontal tabs: SLICE + BOOST.
+    local tabDefs = {
+        { id = "slice", label = "SLICE" },
+        { id = "boost", label = "BOOST" },
+    }
+    local pages = {}
+    local tabBtns = {}
+    local curTab = "slice"
+    local function paintTabs()
+        for _, d in ipairs(tabDefs) do
+            local b = tabBtns[d.id]
+            if b then
+                local active = d.id == curTab
+                tw(b, { BackgroundColor3 = active and CARD2
+                    or Color3.fromRGB(19, 22, 29) }, 0.15)
+                b.TextColor3 = active and ACCENT or DIM
+            end
+        end
+    end
+    local function switchTab(id)
+        if id == curTab then return end
+        local old = pages[curTab]
+        curTab = id
+        paintTabs()
+        local new = pages[curTab]
+        if old then
+            local f = tw(old, { GroupTransparency = 1 }, 0.12)
+            pcall(function()
+                f.Completed:Wait()
+                if pages[curTab] ~= old then old.Visible = false end
+            end)
+        end
+        if new then
+            new.Visible = true
+            tw(new, { GroupTransparency = 0 }, 0.18)
+        end
+    end
+    local TW = (PW - 24 - 8) / 2
+    for i, d in ipairs(tabDefs) do
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0, TW, 0, 30)
+        b.Position = UDim2.new(0, 12 + (i - 1) * (TW + 8), 0, 6)
+        b.BackgroundColor3 = Color3.fromRGB(19, 22, 29)
+        b.BorderSizePixel = 0
+        b.Font = Enum.Font.Code
+        b.TextSize = 11
+        b.TextColor3 = DIM
+        b.Text = d.label
+        b.AutoButtonColor = false
+        b.Parent = body
+        round(b, 8)
+        stroke(b, Color3.fromRGB(55, 60, 78), 0.55)
+        tabBtns[d.id] = b
+        track(b.InputBegan:Connect(function(input)
+            if not isTouch(input) then return end
+            pressBegan(input)
+        end))
+        track(b.InputEnded:Connect(function(input)
+            if not isTouch(input) then return end
+            if pressEnded(input) then switchTab(d.id) end
+        end))
+        local pg = Instance.new("CanvasGroup")
+        pg.Name = "Page_" .. d.id
+        pg.Size = UDim2.new(1, -24, 0, 172)
+        pg.Position = UDim2.new(0, 12, 0, 44)
+        pg.BackgroundTransparency = 1
+        pg.Visible = d.id == curTab
+        pg.GroupTransparency = d.id == curTab and 0 or 1
+        pg.Parent = body
+        pages[d.id] = pg
+    end
+    paintTabs()
+
+    local COLW = (PW - 24 - 8) / 2
+    local function toggleCell(parent, col, row, labelText, initial, cb)
+        local card = Instance.new("TextButton")
+        card.Size = UDim2.new(0, COLW, 0, 40)
+        card.Position = UDim2.new(0, col * (COLW + 8), 0, row * 48)
+        card.BackgroundColor3 = CARD
+        card.BorderSizePixel = 0
+        card.Text = ""
+        card.AutoButtonColor = false
+        card.Parent = parent
+        round(card, 10)
+        stroke(card, Color3.fromRGB(55, 60, 78), 0.55)
+
+        local lb = Instance.new("TextLabel")
+        lb.Size = UDim2.new(1, -70, 1, 0)
+        lb.Position = UDim2.new(0, 10, 0, 0)
+        lb.BackgroundTransparency = 1
+        lb.Font = Enum.Font.Code
+        lb.TextSize = 11
+        lb.TextXAlignment = Enum.TextXAlignment.Left
+        lb.TextColor3 = INK
+        lb.Text = labelText
+        lb.Parent = card
+
+        local sw = Instance.new("Frame")
+        sw.Size = UDim2.new(0, 44, 0, 24)
+        sw.AnchorPoint = Vector2.new(1, 0.5)
+        sw.Position = UDim2.new(1, -10, 0.5, 0)
+        sw.BorderSizePixel = 0
+        sw.Parent = card
+        round(sw, 12)
+
+        local knob = Instance.new("Frame")
+        knob.Size = UDim2.new(0, 18, 0, 18)
+        knob.AnchorPoint = Vector2.new(0, 0.5)
+        knob.Position = UDim2.new(0, 3, 0.5, 0)
+        knob.BackgroundColor3 = Color3.fromRGB(245, 245, 250)
+        knob.BorderSizePixel = 0
+        knob.Parent = sw
+        round(knob, 9)
+
+        local on = initial
+        local function paint(animate)
+            local swC = on and ACCENT or Color3.fromRGB(48, 52, 68)
+            local kx = on and UDim2.new(1, -21, 0.5, 0)
+                or UDim2.new(0, 3, 0.5, 0)
+            if animate then
+                tw(sw, { BackgroundColor3 = swC }, 0.2)
+                tw(knob, { Position = kx }, 0.22,
+                    Enum.EasingStyle.Back)
+            else
+                sw.BackgroundColor3 = swC
+                knob.Position = kx
+            end
+        end
+        paint(false)
+        track(card.InputBegan:Connect(pressBegan))
+        track(card.InputEnded:Connect(function(input)
+            if pressEnded(input) then
+                on = not on
+                paint(true)
+                cb(on)
+            end
+        end))
+    end
+
+    local function wideBtn(parent, row, labelText, cb, danger)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 0, 38)
+        btn.Position = UDim2.new(0, 0, 0, row * 46)
+        btn.BackgroundColor3 = danger and Color3.fromRGB(52, 24, 26)
+            or CARD2
+        btn.BorderSizePixel = 0
+        btn.Font = Enum.Font.Code
+        btn.TextSize = 12
+        btn.TextColor3 = danger and Color3.fromRGB(255, 175, 175) or INK
+        btn.Text = labelText
+        btn.AutoButtonColor = false
+        btn.Parent = parent
+        round(btn, 10)
+        if danger then
+            stroke(btn, Color3.fromRGB(170, 80, 85), 0.4)
+        else
+            stroke(btn, Color3.fromRGB(70, 76, 100), 0.5)
+        end
+        local base = btn.BackgroundColor3
+        local dark = Color3.new(
+            math.max(base.R - 0.06, 0),
+            math.max(base.G - 0.06, 0),
+            math.max(base.B - 0.06, 0))
+        track(btn.InputBegan:Connect(function(input)
+            if not isTouch(input) then return end
+            pressBegan(input)
+            tw(btn, { BackgroundColor3 = dark }, 0.1)
+        end))
+        track(btn.InputEnded:Connect(function(input)
+            if not isTouch(input) then return end
+            tw(btn, { BackgroundColor3 = base }, 0.15)
+            if pressEnded(input) then cb() end
+        end))
+    end
+
+    local slice = pages.slice
+    toggleCell(slice, 0, 0, "Auto Slice", state.autoSwing,
+        function(v)
+            state.autoSwing = v
+            if v then fireSlash() end
+        end)
+    toggleCell(slice, 1, 0, "Turbo", state.turbo,
+        function(v) state.turbo = v end)
+    wideBtn(slice, 1, "SLICE x50 BURST", function() doBurst() end)
+
+    local boost = pages.boost
+    wideBtn(boost, 0, "FIX LAG", function()
+        pcall(fpsBoost)
+        CONFIG.SwingDelay = 0.35
+        note("Lag fix applied")
+    end)
+    wideBtn(boost, 1, "UNLOAD SCRIPT", function() unload() end, true)
+
+    local fullH = y + 224 + 12
+    body.Size = UDim2.new(1, 0, 0, 224)
+    main.Size = UDim2.new(0, PW, 0, fullH)
 
     local collapsed = false
     track(mini.MouseButton1Click:Connect(function()
         collapsed = not collapsed
-        body.Visible = not collapsed
-        main.Size = collapsed and UDim2.new(0, 230, 0, 30)
-            or UDim2.new(0, 230, 0, 232)
-        mini.Text = collapsed and "+" or "_"
+        mini.Text = collapsed and "+" or "-"
+        tw(main, { Size = collapsed and UDim2.new(0, PW, 0, 52)
+            or UDim2.new(0, PW, 0, fullH) }, 0.3,
+            Enum.EasingStyle.Quart)
     end))
 
-    -- drag by the title bar, mouse or touch
-    local dragging, dragStart, startPos = false, nil, nil
-    track(title.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = main.Position
-        end
-    end))
-    track(title.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end))
-    track(game:GetService("UserInputService").InputChanged:Connect(function(input)
-        if dragging
-            and (input.UserInputType == Enum.UserInputType.MouseMovement
-                or input.UserInputType == Enum.UserInputType.Touch) then
-            local d = input.Position - dragStart
-            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
-                startPos.Y.Scale, startPos.Y.Offset + d.Y)
-        end
-    end))
-
-    local y = 6
-    local function row(label, initial, cb)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -16, 0, 30)
-        btn.Position = UDim2.new(0, 8, 0, y)
-        btn.BackgroundColor3 = Color3.fromRGB(28, 30, 38)
-        btn.BorderColor3 = Color3.fromRGB(90, 90, 100)
-        btn.BorderSizePixel = 1
-        btn.Font = Enum.Font.Code
-        btn.TextSize = 12
-        btn.TextColor3 = Color3.fromRGB(235, 235, 240)
-        btn.AutoButtonColor = true
-        local on = initial
-        local function paint()
-            btn.Text = (on and "[ ON ]  " or "[ OFF ] ") .. label
-        end
-        paint()
-        track(btn.MouseButton1Click:Connect(function()
-            on = not on
-            paint()
-            cb(on)
-        end))
-        btn.Parent = body
-        y = y + 36
-        return function(v)
-            on = v
-            paint()
-        end
-    end
-
-    local function label(text, grayed)
-        local t = Instance.new("TextLabel")
-        t.Size = UDim2.new(1, -16, 0, 20)
-        t.Position = UDim2.new(0, 8, 0, y)
-        t.BackgroundTransparency = 1
-        t.Font = Enum.Font.Code
-        t.TextSize = 12
-        t.TextXAlignment = Enum.TextXAlignment.Left
-        t.TextColor3 = grayed and Color3.fromRGB(110, 110, 120)
-            or Color3.fromRGB(200, 200, 208)
-        t.Text = text
-        t.Parent = body
-        y = y + 24
-    end
-
-    row("Auto Slice", state.autoSwing, function(v) state.autoSwing = v end)
-
-    local boostBtn = Instance.new("TextButton")
-    boostBtn.Size = UDim2.new(1, -16, 0, 30)
-    boostBtn.Position = UDim2.new(0, 8, 0, y)
-    boostBtn.BackgroundColor3 = Color3.fromRGB(28, 30, 38)
-    boostBtn.BorderColor3 = Color3.fromRGB(90, 90, 100)
-    boostBtn.BorderSizePixel = 1
-    boostBtn.Font = Enum.Font.Code
-    boostBtn.TextSize = 12
-    boostBtn.TextColor3 = Color3.fromRGB(235, 235, 240)
-    boostBtn.Text = "FPS Boost"
-    boostBtn.Parent = body
-    y = y + 36
-    track(boostBtn.MouseButton1Click:Connect(function()
-        pcall(fpsBoost)
-        note("FPS boost applied")
-    end))
-
-    local killBtn = Instance.new("TextButton")
-    killBtn.Size = UDim2.new(1, -16, 0, 30)
-    killBtn.Position = UDim2.new(0, 8, 0, y)
-    killBtn.BackgroundColor3 = Color3.fromRGB(64, 20, 20)
-    killBtn.BorderColor3 = Color3.fromRGB(200, 90, 90)
-    killBtn.BorderSizePixel = 1
-    killBtn.Font = Enum.Font.Code
-    killBtn.TextSize = 12
-    killBtn.TextColor3 = Color3.fromRGB(255, 180, 180)
-    killBtn.Text = "UNLOAD SCRIPT"
-    killBtn.Parent = body
-    y = y + 36
-    killBtn.MouseButton1Click:Connect(function()
-        unload()
-    end)
-
-    label("Auto Train  (next update)", true)
     buildEmblem(gui, main)
+
+    local endPos = main.Position
+    main.Position = UDim2.new(endPos.X.Scale, endPos.X.Offset,
+        endPos.Y.Scale, endPos.Y.Offset + 24)
+    main.Visible = true
+    tw(main, { GroupTransparency = 0 }, 0.3)
+    tw(main, { Position = endPos }, 0.35, Enum.EasingStyle.Back)
     return true
 end
 
