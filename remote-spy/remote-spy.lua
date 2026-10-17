@@ -575,72 +575,138 @@ end
 pcall(function()
     local wrap = newcclosure or function(f) return f end
 
-    local function isRemoteClass(self)
-        local ok, a, b = pcall(function()
-            return self:IsA("RemoteEvent"), self:IsA("RemoteFunction")
-        end)
-        return ok and (a or b) == true
+    -- Re-entrancy guard, and the single most important line in this file.
+    -- The executor's __namecall is shared by every Instance, not just `game`,
+    -- so anything the hook touches that is ITSELF a namecall on an Instance
+    -- re-enters the hook. v1.2.4 called self:IsA() as its very first step:
+    -- hook -> IsA -> hook -> IsA -> ... stack overflow, hook dead, nothing
+    -- ever logged. Any method call in here needs this guard.
+    local inHook = false
+
+    -- typeof() is a plain global call, never a namecall, so it cannot recurse.
+    -- ClassName is a property read, also recursion-safe. IsA() is BOTH unsafe
+    -- and unnecessary here.
+    local function remoteClassOf(self)
+        local t = typeof(self)
+        if t == "RemoteEvent" or t == "RemoteFunction" then return true end
+        local ok, cn = pcall(function() return self.ClassName end)
+        return ok and (cn == "RemoteEvent" or cn == "RemoteFunction")
     end
 
     local function handle(method, self, args, n)
-        if not isRemoteClass(self) then return end
-        ncTotal = ncTotal + 1
-        local m = string.lower(tostring(method or ""))
-        if m ~= "fireserver" and m ~= "invokeserver" then
-            if m == "" then
-                -- No name available, but we know the target is a remote and
-                -- that it was reached through :Method(). FireServer cannot
-                -- return a value, so a call with no expectation is the safe
-                -- classification. RemoteFunction traffic gets corrected the
-                -- moment getnamecallmethod shows up.
-                m = "fireserver"
-            else
-                return
+        if inHook then return end
+        inHook = true
+        -- Wrapped whole: a throw inside must not leave inHook stuck true,
+        -- which would silently deafen every later call.
+        pcall(function()
+            if not remoteClassOf(self) then return end
+            ncTotal = ncTotal + 1
+            local m = string.lower(tostring(method or ""))
+            if m ~= "fireserver" and m ~= "invokeserver" then
+                if m == "" then
+                    -- No name available, but we know the target is a remote
+                    -- and that it was reached through :Method(). FireServer
+                    -- cannot return a value, so a call with no return
+                    -- expectation is the safe classification.
+                    m = "fireserver"
+                else
+                    return
+                end
             end
-        end
-        local resolved = (m == "fireserver") and "FireServer" or "InvokeServer"
-        if not CONFIG.LogOwn and type(checkcaller) == "function" then
-            local okC, isOurs = pcall(checkcaller)
-            if okC and isOurs then return end
-        end
-        pcall(logCall, self, resolved, args, n)
+            local resolved = (m == "fireserver") and "FireServer"
+                or "InvokeServer"
+            if not CONFIG.LogOwn and type(checkcaller) == "function" then
+                local okC, isOurs = pcall(checkcaller)
+                if okC and isOurs then return end
+            end
+            pcall(logCall, self, resolved, args, n)
+        end)
+        inHook = false
     end
 
-    -- 1. Direct C-closure hooks. Originals captured first, assigned to
-    -- oldEvent/oldFunc BEFORE hookfunction runs, so the passthrough inside
-    -- the replacement can never see nil even if the hook is installed
-    -- synchronously.
+-- Synchronous proof that a hook is actually live.
+    -- :FireServer() dispatches through the hook inline, so ncTotal moves
+    -- before this returns -- no task.wait, no guessing.
+    local function canaryCaught()
+        local before = ncTotal
+        local c = Instance.new("RemoteEvent")
+        c.Name = "NetLensCanary"
+        c.Parent = workspace
+        pcall(function() c:FireServer("ping") end)
+        pcall(function() c:Destroy() end)
+        return ncTotal > before
+    end
+
+    -- Install a path, then demand proof. A path that cannot catch its own
+    -- canary is unhooked and reported dead.
+    --
+    -- Second v1.2.4-level bug: the old install accepted the FIRST path whose
+    -- pcall merely did not throw, then stopped. hookfunction on a Roblox C
+    -- closure is frequently a silent no-op, so path 1 "succeeded" while
+    -- catching nothing -- and since hookMode was already set, the working
+    -- __namecall fallbacks were never attempted at all. A hook being
+    -- installed is not evidence that it runs; the canary is the evidence.
+    local function tryPath(mode, install, uninstall)
+        if not pcall(install) then return false end
+        if canaryCaught() then
+            hookMode = mode
+            return true
+        end
+        pcall(uninstall)
+        hookSkip = mode .. ":silent"
+        return false
+    end
+
+    -- 1. Direct C-closure hooks. Originals captured before hooking and
+    -- assigned to oldEvent/oldFunc first, so the passthrough can never see
+    -- nil even when the hook installs synchronously.
     if hasHookFn then
-        pcall(function()
+        tryPath("hookfunction", function()
             probeE = Instance.new("RemoteEvent")
             probeF = Instance.new("RemoteFunction")
             local origE = probeE.FireServer
             local origF = probeF.InvokeServer
-            if type(origE) ~= "function" or type(origF) ~= "function" then
-                return
+            if type(origE) ~= "function" then
+                error("no FireServer")
             end
-            oldEvent, oldFunc = origE, origF
+            oldEvent = origE
             pcall(hookfunction, origE, wrap(function(self, ...)
                 local a, n = packArgs(...)
                 handle("FireServer", self, a, n)
                 return oldEvent(self, ...)
             end))
-            pcall(hookfunction, origF, wrap(function(self, ...)
-                local a, n = packArgs(...)
-                handle("InvokeServer", self, a, n)
-                return oldFunc(self, ...)
-            end))
-            hookMode = "hookfunction"
+            -- RemoteFunction is a separate closure. Install it when reachable,
+            -- but never let it decide the whole path.
+            if type(origF) == "function" then
+                oldFunc = origF
+                pcall(hookfunction, origF, wrap(function(self, ...)
+                    local a, n = packArgs(...)
+                    handle("InvokeServer", self, a, n)
+                    return oldFunc(self, ...)
+                end))
+            end
+        end, function()
+            if probeE and type(oldEvent) == "function" then
+                local live = probeE.FireServer
+                if type(live) == "function" then
+                    pcall(hookfunction, live, oldEvent)
+                end
+            end
+            if probeF and type(oldFunc) == "function" then
+                local live = probeF.InvokeServer
+                if type(live) == "function" then
+                    pcall(hookfunction, live, oldFunc)
+                end
+            end
         end)
     end
 
-    -- 2. Raw __namecall. Same discipline: save the original, then hook, and
-    -- do not care what hookfunction hands back.
+    -- 2. Raw __namecall. Save the original, hook, ignore the return value.
     if hookMode == "none" and hasHookFn and hasRawMT then
-        pcall(function()
+        tryPath("rawnamecall", function()
             local mt = getrawmetatable(game)
             if type(mt) ~= "table" or type(mt.__namecall) ~= "function" then
-                return
+                error("no raw __namecall")
             end
             rawMT = mt
             oldRaw = mt.__namecall
@@ -649,50 +715,52 @@ pcall(function()
                 handle(calledMethod(), self, a, n)
                 return oldRaw(self, ...)
             end))
-            hookMode = "rawnamecall"
+        end, function()
+            if rawMT and type(oldRaw) == "function" then
+                local live = rawMT.__namecall
+                if type(live) == "function" then
+                    pcall(hookfunction, live, oldRaw)
+                end
+            end
         end)
     end
 
-    -- 3. hookmetamethod. Note the name is __namecall, NOT __namecallmethod;
-    -- the wrong name installs a hook that never fires.
+    -- 3. hookmetamethod. The name is __namecall, NOT __namecallmethod; the
+    -- wrong name installs a hook that never fires.
     --
-    -- hookmetamethod is the one API here that does NOT hand back the
-    -- original on every executor, so a passthrough is only safe if we can
-    -- independently obtain the current __namecall. If we cannot, path 3 is
-    -- skipped entirely: a live hook whose replacement calls nil is far worse
-    -- than no hook, because it breaks every :Method() call in the game.
+    -- hookmetamethod does not hand back the original on every executor, so
+    -- decide BEFORE installing: with no independent copy of __namecall there
+    -- is no safe passthrough, and a live hook whose replacement calls nil
+    -- breaks every :Method() call in the game.
     if hookMode == "none" and hasHookMM then
-        pcall(function()
-            -- Decide BEFORE installing. If we cannot independently obtain the
-            -- current __namecall, we have no safe passthrough, and a live hook
-            -- whose replacement calls nil breaks every :Method() in the game.
-            -- Refusing to install is strictly better than "looks armed".
-            local known = nil
-            if hasRawMT then
+        local known = nil
+        if hasRawMT then
+            pcall(function()
                 local mt = getrawmetatable(game)
                 if type(mt) == "table" and type(mt.__namecall) == "function" then
                     known = mt.__namecall
                 end
-            end
-            if type(known) ~= "function" then
-                hookSkip = "namecall:no-original"
-                return
-            end
-            oldNC = known
-            local captured
-            pcall(function()
-                captured = hookmetamethod(game, "__namecall",
-                    wrap(function(self, ...)
-                        local a, n = packArgs(...)
-                        handle(calledMethod(), self, a, n)
-                        return oldNC(self, ...)
-                    end))
             end)
-            -- Prefer what hookmetamethod reported, keep the known original
-            -- either way: the passthrough is never left nil.
-            if type(captured) == "function" then oldNC = captured end
-            hookMode = "namecall"
-        end)
+        end
+        if type(known) ~= "function" then
+            hookSkip = "namecall:no-original"
+        else
+            tryPath("namecall", function()
+                oldNC = known
+                local captured
+                pcall(function()
+                    captured = hookmetamethod(game, "__namecall",
+                        wrap(function(self, ...)
+                            local a, n = packArgs(...)
+                            handle(calledMethod(), self, a, n)
+                            return oldNC(self, ...)
+                        end))
+                end)
+                if type(captured) == "function" then oldNC = captured end
+            end, function()
+                pcall(hookmetamethod, game, "__namecall", oldNC)
+            end)
+        end
     end
 end)
 
@@ -846,11 +914,25 @@ local function buildEmblem(parent, panel)
 end
 
 local function buildUI()
+    -- Parent resolution, most-reliable first. A single pcall around the
+    -- whole expression was a silent killer: if gethui() errored, parent
+    -- stayed nil and the script mounted no UI at all, with the hook running
+    -- invisibly in the background. Each candidate is tried on its own.
     local parent = nil
-    pcall(function()
-        parent = (gethui and gethui()) or game:GetService("CoreGui")
-    end)
-    if not parent then return false end
+    if type(gethui) == "function" then
+        pcall(function() parent = gethui() end)
+    end
+    if type(parent) ~= "Instance" then parent = nil end
+    if not parent then
+        pcall(function() parent = game:GetService("CoreGui") end)
+    end
+    if type(parent) ~= "Instance" then
+        pcall(function() parent = LocalPlayer:WaitForChild("PlayerGui") end)
+    end
+    if not parent then
+        note("UI failed to mount: no usable ScreenGui parent")
+        return false
+    end
 
     local gui = Instance.new("ScreenGui")
     gui.Name = "NetLens"
