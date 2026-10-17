@@ -1,4 +1,4 @@
--- NullShight Slice A Dummy! // v0.3.0
+-- NullShight Slice A Dummy! // v0.4.0
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
 -- Land every hit for the user: tap the big slice button is never needed.
 --
@@ -176,7 +176,7 @@ local function fireSlash()
                 doneRemote:InvokeServer(unpack(doneArgs))
             end
         end)
-        if ok then return true end
+        if ok then countHit() return true end
     end
     return false
 end
@@ -185,6 +185,9 @@ local state = {
     autoSwing = CONFIG.AutoSwing,
     turbo = CONFIG.Turbo,
 }
+
+local hits = 0
+local function countHit() hits = hits + 1 end
 
 local function doBurst()
     task.spawn(function()
@@ -218,19 +221,27 @@ task.spawn(function()
     end
 end)
 
--- UI v2: Fluent-style landscape tabs, toggle switches, grab-anywhere
--- drag, bright NS emblem. Pure Instance API, no external libs.
+-- NS Console UI. Concept notes (references: Fluent / WindUI / Rayfield,
+-- plus mobile layout rules: tabs for 2-6 peer sections, >=44px touch
+-- targets, stable content height, progressive disclosure on landscape).
+--   * Left icon rail instead of a top tab bar: vertical space is the
+--     scarce axis on a phone in landscape, so navigation moves there.
+--   * Hairline rows instead of a card per option: ~2x the density.
+--   * One signature accent per game, thin double ring + idle breathing
+--     on the emblem, monospace readouts in the header.
 local TweenService = game:GetService("TweenService")
 
-local ACCENT = Color3.fromRGB(255, 170, 130)
-local CARD = Color3.fromRGB(24, 27, 36)
-local CARD2 = Color3.fromRGB(30, 34, 46)
-local INK = Color3.fromRGB(235, 235, 242)
-local DIM = Color3.fromRGB(150, 155, 175)
+local ACCENT = Color3.fromRGB(255, 138, 110)
+local ACCENT_DIM = Color3.fromRGB(96, 52, 44)
+local BASE = Color3.fromRGB(13, 14, 18)
+local RAILL = Color3.fromRGB(17, 18, 23)
+local HAIR = Color3.fromRGB(38, 40, 50)
+local INK = Color3.fromRGB(232, 232, 240)
+local DIM = Color3.fromRGB(132, 136, 152)
 
 local function tw(obj, props, dur, style, dir)
     local t = TweenService:Create(obj,
-        TweenInfo.new(dur or 0.22, style or Enum.EasingStyle.Quart,
+        TweenInfo.new(dur or 0.2, style or Enum.EasingStyle.Quart,
             dir or Enum.EasingDirection.Out), props)
     t:Play()
     return t
@@ -242,13 +253,70 @@ local function round(obj, r)
     c.Parent = obj
 end
 
-local function stroke(obj, color, transp)
-    local st = Instance.new("UIStroke")
-    st.Color = color
-    st.Transparency = transp or 0.5
-    st.Thickness = 1
-    st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    st.Parent = obj
+local function hairline(parent, yPos, w)
+    local l = Instance.new("Frame")
+    l.Size = UDim2.new(0, w or 200, 0, 1)
+    l.Position = UDim2.new(0, 12, 0, yPos)
+    l.BackgroundColor3 = HAIR
+    l.BorderSizePixel = 0
+    l.Parent = parent
+    return l
+end
+
+-- Geometric rail icons built from Frames: always renders, no assets,
+-- no emoji. kind: "bolt" | "gauge" | "list" | "cube"
+local function railIcon(parent, kind, cy)
+    local holder = Instance.new("Frame")
+    holder.Size = UDim2.new(0, 20, 0, 20)
+    holder.AnchorPoint = Vector2.new(0.5, 0.5)
+    holder.Position = UDim2.new(0.5, 0, 0, cy)
+    holder.BackgroundTransparency = 1
+    holder.Parent = parent
+
+    local function bar(w, h, x, y, rot, col)
+        local b = Instance.new("Frame")
+        b.Size = UDim2.new(0, w, 0, h)
+        b.AnchorPoint = Vector2.new(0.5, 0.5)
+        b.Position = UDim2.new(0.5, x, 0.5, y)
+        b.BackgroundColor3 = col or Color3.fromRGB(150, 154, 170)
+        b.BorderSizePixel = 0
+        b.Rotation = rot or 0
+        b.Parent = holder
+        round(b, math.max(math.min(w, h) / 2, 1))
+        return b
+    end
+
+    if kind == "bolt" then
+        bar(3, 11, -3, -2, 22)
+        bar(3, 8, 3, 3, 22)
+    elseif kind == "gauge" then
+        local ring = Instance.new("Frame")
+        ring.Size = UDim2.new(0, 15, 0, 15)
+        ring.BackgroundTransparency = 1
+        ring.Parent = holder
+        round(ring, 8)
+        local s = Instance.new("UIStroke")
+        s.Color = Color3.fromRGB(150, 154, 170)
+        s.Thickness = 2
+        s.Parent = ring
+        bar(2, 6, 2, -2, 35)
+    elseif kind == "cube" then
+        local o = Instance.new("Frame")
+        o.Size = UDim2.new(0, 13, 0, 13)
+        o.BackgroundTransparency = 1
+        o.Parent = holder
+        round(o, 3)
+        local s = Instance.new("UIStroke")
+        s.Color = Color3.fromRGB(150, 154, 170)
+        s.Thickness = 1.5
+        s.Parent = o
+        bar(5, 2, 0, 0, 0)
+    else -- list
+        bar(13, 2, 0, -5)
+        bar(13, 2, 0, 0)
+        bar(9, 2, -2, 5)
+    end
+    return holder
 end
 
 local function buildEmblem(parent, panel)
@@ -265,30 +333,44 @@ local function buildEmblem(parent, panel)
 
     local emb = Instance.new("TextLabel")
     emb.Name = "Emblem"
-    emb.Size = UDim2.new(0, 56, 0, 56)
-    emb.Position = UDim2.new(0.5, -28, 0.5, -28)
-    emb.BackgroundColor3 = Color3.fromRGB(48, 42, 52)
+    emb.Size = UDim2.new(0, 54, 0, 54)
+    emb.Position = UDim2.new(0.5, -27, 0.5, -27)
+    emb.BackgroundColor3 = Color3.fromRGB(22, 20, 24)
     emb.BorderSizePixel = 0
     emb.Font = Enum.Font.Code
-    emb.TextSize = 20
+    emb.TextSize = 19
     emb.TextColor3 = Color3.fromRGB(255, 255, 255)
-    emb.TextStrokeTransparency = 0.5
+    emb.TextStrokeTransparency = 0.45
     emb.Text = "NS"
     emb.Parent = pad
-    round(emb, 28)
+    round(emb, 27)
 
     local grad = Instance.new("UIGradient")
     grad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(74, 60, 72)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(28, 24, 32)),
+        ColorSequenceKeypoint.new(0, ACCENT_DIM),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(14, 14, 18)),
     })
-    grad.Rotation = 35
+    grad.Rotation = 40
     grad.Parent = emb
 
+    -- Double thin ring: outer accent hairline + inner gap ring.
     local ring = Instance.new("UIStroke")
-    ring.Color = Color3.fromRGB(240, 235, 240)
-    ring.Thickness = 2
+    ring.Color = ACCENT
+    ring.Thickness = 1.5
     ring.Parent = emb
+
+    local ring2 = Instance.new("Frame")
+    ring2.Size = UDim2.new(1, -9, 1, -9)
+    ring2.AnchorPoint = Vector2.new(0.5, 0.5)
+    ring2.Position = UDim2.new(0.5, 0, 0.5, 0)
+    ring2.BackgroundTransparency = 1
+    ring2.Parent = emb
+    round(ring2, 23)
+    local ring2s = Instance.new("UIStroke")
+    ring2s.Color = Color3.fromRGB(220, 200, 195)
+    ring2s.Thickness = 1
+    ring2s.Transparency = 0.55
+    ring2s.Parent = ring2
 
     local visible = true
     local downPos, startPos, moved = nil, nil, false
@@ -298,21 +380,21 @@ local function buildEmblem(parent, panel)
             downPos = input.Position
             startPos = pad.Position
             moved = false
-            tw(emb, { Size = UDim2.new(0, 48, 0, 48),
-                Position = UDim2.new(0.5, -24, 0.5, -24) }, 0.12)
+            tw(emb, { Size = UDim2.new(0, 46, 0, 46),
+                Position = UDim2.new(0.5, -23, 0.5, -23) }, 0.12)
         end
     end))
     local function release(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
-            tw(emb, { Size = UDim2.new(0, 56, 0, 56),
-                Position = UDim2.new(0.5, -28, 0.5, -28) }, 0.18,
+            tw(emb, { Size = UDim2.new(0, 54, 0, 54),
+                Position = UDim2.new(0.5, -27, 0.5, -27) }, 0.18,
                 Enum.EasingStyle.Back)
             if not moved and downPos then
                 visible = not visible
                 if visible then
                     panel.Visible = true
-                    tw(panel, { GroupTransparency = 0 }, 0.22)
+                    tw(panel, { GroupTransparency = 0 }, 0.2)
                 else
                     local f = tw(panel, { GroupTransparency = 1 }, 0.18)
                     pcall(function()
@@ -320,8 +402,7 @@ local function buildEmblem(parent, panel)
                         if not visible then panel.Visible = false end
                     end)
                 end
-                ring.Color = visible and Color3.fromRGB(240, 235, 240)
-                    or Color3.fromRGB(110, 115, 130)
+                ring.Color = visible and ACCENT or DIM
             end
             downPos = nil
         end
@@ -346,6 +427,22 @@ local function buildEmblem(parent, panel)
             downPos = nil
         end
     end))
+
+    -- Idle breathing: subtle, cheap, gives the emblem a pulse of life.
+    task.spawn(function()
+        local t = 0
+        while alive and _G.NSSD_Gen == myGen do
+            t = t + 0.05
+            local k = 1 + math.sin(t) * 0.035
+            pcall(function()
+                if emb.Parent then
+                    emb.Size = UDim2.new(0, 54 * k, 0, 54 * k)
+                    emb.Position = UDim2.new(0.5, -27 * k, 0.5, -27 * k)
+                end
+            end)
+            task.wait(0.05)
+        end
+    end)
 end
 
 local function buildUI()
@@ -361,97 +458,246 @@ local function buildUI()
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     gui.Parent = parent
 
-    local PW = 470
+    local PW, PH = 470, 288
+    local RAIL = 46
     local main = Instance.new("CanvasGroup")
     main.Name = "Panel"
-    main.Position = UDim2.new(0, 16, 0, 60)
-    main.BackgroundColor3 = Color3.fromRGB(16, 15, 19)
+    main.Position = UDim2.new(0, 14, 0, 56)
+    main.BackgroundColor3 = BASE
     main.BorderSizePixel = 0
     main.ClipsDescendants = true
     main.GroupTransparency = 1
+    main.Size = UDim2.new(0, PW, 0, PH)
     main.Parent = gui
-    round(main, 14)
-    stroke(main, Color3.fromRGB(112, 92, 108), 0.4)
+    round(main, 16)
 
-    local y = 0
+    -- Header: 42px, accent underline is the only "decoration" we allow.
     local head = Instance.new("TextButton")
     head.Name = "Head"
-    head.Size = UDim2.new(1, 0, 0, 52)
+    head.Size = UDim2.new(1, 0, 0, 42)
     head.BackgroundTransparency = 1
     head.Text = ""
     head.AutoButtonColor = false
     head.Parent = main
-    y = 52
 
     local badge = Instance.new("TextLabel")
-    badge.Size = UDim2.new(0, 30, 0, 30)
-    badge.Position = UDim2.new(0, 12, 0.5, -15)
-    badge.BackgroundColor3 = Color3.fromRGB(40, 30, 40)
+    badge.Size = UDim2.new(0, 22, 0, 22)
+    badge.Position = UDim2.new(0, 12, 0.5, -11)
+    badge.BackgroundColor3 = Color3.fromRGB(30, 24, 28)
     badge.BorderSizePixel = 0
     badge.Font = Enum.Font.Code
-    badge.TextSize = 12
+    badge.TextSize = 11
     badge.TextColor3 = ACCENT
     badge.Text = "NS"
     badge.Parent = head
-    round(badge, 9)
-    stroke(badge, ACCENT, 0.45)
+    round(badge, 7)
 
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -92, 0, 20)
-    title.Position = UDim2.new(0, 50, 0, 7)
+    title.Size = UDim2.new(0, 150, 0, 16)
+    title.Position = UDim2.new(0, 42, 0, 6)
     title.BackgroundTransparency = 1
     title.Font = Enum.Font.Code
-    title.TextSize = 14
+    title.TextSize = 12
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.TextColor3 = INK
-    title.Text = "NULLSHIGHT"
+    title.Text = "SLICE A DUMMY"
     title.Parent = head
 
-    local sub = Instance.new("TextLabel")
-    sub.Size = UDim2.new(1, -92, 0, 14)
-    sub.Position = UDim2.new(0, 50, 0, 28)
-    sub.BackgroundTransparency = 1
-    sub.Font = Enum.Font.Code
-    sub.TextSize = 10
-    sub.TextXAlignment = Enum.TextXAlignment.Left
-    sub.TextColor3 = DIM
-    sub.Text = "SLICE A DUMMY v0.3.0"
-    sub.Parent = head
+    local readout = Instance.new("TextLabel")
+    readout.Size = UDim2.new(0, 120, 0, 14)
+    readout.Position = UDim2.new(0, 42, 0, 23)
+    readout.BackgroundTransparency = 1
+    readout.Font = Enum.Font.Code
+    readout.TextSize = 9
+    readout.TextXAlignment = Enum.TextXAlignment.Left
+    readout.TextColor3 = DIM
+    readout.Text = "hits 0"
+    readout.Parent = head
 
     local mini = Instance.new("TextButton")
-    mini.Size = UDim2.new(0, 30, 0, 30)
-    mini.Position = UDim2.new(1, -40, 0.5, -15)
-    mini.BackgroundColor3 = CARD
-    mini.BorderSizePixel = 0
+    mini.Size = UDim2.new(0, 26, 0, 26)
+    mini.Position = UDim2.new(1, -34, 0.5, -13)
+    mini.BackgroundTransparency = 1
     mini.Font = Enum.Font.Code
-    mini.TextSize = 16
+    mini.TextSize = 14
     mini.TextColor3 = DIM
     mini.Text = "-"
     mini.AutoButtonColor = false
     mini.Parent = head
-    round(mini, 9)
-    stroke(mini, Color3.fromRGB(55, 60, 78), 0.55)
 
-    local body = Instance.new("Frame")
-    body.Name = "Body"
-    body.Size = UDim2.new(1, 0, 0, 224)
-    body.Position = UDim2.new(0, 0, 0, y)
-    body.BackgroundTransparency = 1
-    body.ClipsDescendants = true
-    body.Parent = main
+    hairline(main, 41, PW)
+    local accentLine = Instance.new("Frame")
+    accentLine.Size = UDim2.new(0, 64, 0, 2)
+    accentLine.Position = UDim2.new(0, 12, 0, 41)
+    accentLine.BackgroundColor3 = ACCENT
+    accentLine.BorderSizePixel = 0
+    accentLine.Parent = main
+    round(accentLine, 1)
 
-    -- Grab-anywhere drag with tap threshold.
+    -- Left rail.
+    local rail = Instance.new("Frame")
+    rail.Name = "Rail"
+    rail.Size = UDim2.new(0, RAIL, 1, -42)
+    rail.Position = UDim2.new(0, 0, 0, 42)
+    rail.BackgroundColor3 = RAILL
+    rail.BorderSizePixel = 0
+    rail.Parent = main
+
+    local railEdge = Instance.new("Frame")
+    railEdge.Size = UDim2.new(0, 1, 1, 0)
+    railEdge.BackgroundColor3 = HAIR
+    railEdge.BorderSizePixel = 0
+    railEdge.Parent = rail
+
+    local pages, tabSlots, rowHighlights = {}, {}, {}
+    local curTab = "slice"
+    local CONTENT_X = RAIL
+    local CONTENT_W = PW - RAIL
+
+    local function makeRow(parent, yPos, h)
+        local row = Instance.new("TextButton")
+        row.Size = UDim2.new(1, -24, 0, h or 34)
+        row.Position = UDim2.new(0, CONTENT_X + 12, 0, yPos)
+        row.BackgroundTransparency = 1
+        row.Text = ""
+        row.AutoButtonColor = false
+        row.Parent = parent
+        local hl = Instance.new("Frame")
+        hl.Size = UDim2.new(1, -24, 1, 0)
+        hl.BackgroundColor3 = ACCENT
+        hl.BackgroundTransparency = 1
+        hl.BorderSizePixel = 0
+        hl.Parent = row
+        rowHighlights[row] = hl
+        return row
+    end
+
+    local function micro(parent, yPos, text)
+        local t = Instance.new("TextLabel")
+        t.Size = UDim2.new(1, -48, 0, 14)
+        t.Position = UDim2.new(0, 24, 0, yPos)
+        t.BackgroundTransparency = 1
+        t.Font = Enum.Font.Code
+        t.TextSize = 9
+        t.TextXAlignment = Enum.TextXAlignment.Left
+        t.TextColor3 = DIM
+        t.Text = text
+        t.Parent = parent
+        return t
+    end
+
+    local function toggleRow(parent, yPos, labelText, initial, cb)
+        local row = makeRow(parent, yPos, 34)
+        local lb = Instance.new("TextLabel")
+        lb.Size = UDim2.new(1, -60, 1, 0)
+        lb.Position = UDim2.new(0, 10, 0, 0)
+        lb.BackgroundTransparency = 1
+        lb.Font = Enum.Font.Code
+        lb.TextSize = 11
+        lb.TextXAlignment = Enum.TextXAlignment.Left
+        lb.TextColor3 = INK
+        lb.Text = labelText
+        lb.Parent = row
+
+        local sw = Instance.new("Frame")
+        sw.Size = UDim2.new(0, 34, 0, 19)
+        sw.AnchorPoint = Vector2.new(1, 0.5)
+        sw.Position = UDim2.new(1, -12, 0.5, 0)
+        sw.BackgroundColor3 = Color3.fromRGB(44, 46, 56)
+        sw.BorderSizePixel = 0
+        sw.Parent = row
+        round(sw, 10)
+
+        local knob = Instance.new("Frame")
+        knob.Size = UDim2.new(0, 13, 0, 13)
+        knob.AnchorPoint = Vector2.new(0, 0.5)
+        knob.Position = UDim2.new(0, 3, 0.5, 0)
+        knob.BackgroundColor3 = Color3.fromRGB(210, 212, 222)
+        knob.BorderSizePixel = 0
+        knob.Parent = sw
+        round(knob, 7)
+
+        local on = initial
+        local function paint(animate)
+            local target = on and ACCENT or Color3.fromRGB(44, 46, 56)
+            local kx = on and UDim2.new(1, -16, 0.5, 0)
+                or UDim2.new(0, 3, 0.5, 0)
+            if animate then
+                tw(sw, { BackgroundColor3 = target }, 0.18)
+                tw(knob, { Position = kx }, 0.2, Enum.EasingStyle.Back)
+            else
+                sw.BackgroundColor3 = target
+                knob.Position = kx
+            end
+        end
+        paint(false)
+        track(row.InputBegan:Connect(function(input)
+            if not isTouch(input) then return end
+            pressBegan(input)
+            tw(rowHighlights[row], { BackgroundTransparency = 0.88 }, 0.1)
+        end))
+        track(row.InputEnded:Connect(function(input)
+            if not isTouch(input) then return end
+            tw(rowHighlights[row], { BackgroundTransparency = 1 }, 0.2)
+            if pressEnded(input) then
+                on = not on
+                paint(true)
+                cb(on)
+            end
+        end))
+        return row
+    end
+
+    local function actionBtn(parent, yPos, labelText, cb, danger)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, -48, 0, 30)
+        btn.Position = UDim2.new(0, 24, 0, yPos)
+        btn.BackgroundColor3 = danger and Color3.fromRGB(46, 22, 24)
+            or Color3.fromRGB(26, 28, 36)
+        btn.BorderSizePixel = 0
+        btn.Font = Enum.Font.Code
+        btn.TextSize = 11
+        btn.TextColor3 = danger and Color3.fromRGB(255, 170, 170) or INK
+        btn.Text = labelText
+        btn.AutoButtonColor = false
+        btn.Parent = parent
+        round(btn, 8)
+        local edge = Instance.new("UIStroke")
+        edge.Color = danger and Color3.fromRGB(150, 70, 76)
+            or HAIR
+        edge.Thickness = 1
+        edge.Transparency = danger and 0.4 or 0.3
+        edge.Parent = btn
+        local base = btn.BackgroundColor3
+        local dark = Color3.new(
+            math.max(base.R - 0.05, 0),
+            math.max(base.G - 0.05, 0),
+            math.max(base.B - 0.05, 0))
+        track(btn.InputBegan:Connect(function(input)
+            if not isTouch(input) then return end
+            pressBegan(input)
+            tw(btn, { BackgroundColor3 = dark }, 0.1)
+        end))
+        track(btn.InputEnded:Connect(function(input)
+            if not isTouch(input) then return end
+            tw(btn, { BackgroundColor3 = base }, 0.15)
+            if pressEnded(input) then cb() end
+        end))
+        return btn
+    end
+
+    -- Grab-anywhere drag + shared tap/drag helper.
+    local dragging, dragStart, startPos, moved = false, nil, nil, false
     local function clampPanel()
         local cam = workspace.CurrentCamera
         local vs = (cam and cam.ViewportSize) or Vector2.new(800, 600)
         local p = main.Position
         local w = main.AbsoluteSize.X
         local h = main.AbsoluteSize.Y
-        local x = math.max(-w + 80, math.min(p.X.Offset, vs.X - 80))
-        local yy = math.max(-h + 60, math.min(p.Y.Offset, vs.Y - 60))
-        main.Position = UDim2.new(0, x, 0, yy)
+        main.Position = UDim2.new(0,
+            math.max(-w + 80, math.min(p.X.Offset, vs.X - 80)), 0,
+            math.max(-h + 60, math.min(p.Y.Offset, vs.Y - 60)))
     end
-    local dragging, dragStart, startPos, moved = false, nil, nil, false
     local function isTouch(input)
         return input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch
@@ -488,39 +734,129 @@ local function buildUI()
     track(game:GetService("UserInputService").InputEnded:Connect(function(input)
         pressEnded(input)
     end))
-    body.Active = true
+    head.Active = true
+    rail.Active = true
     track(head.InputBegan:Connect(pressBegan))
     track(head.InputEnded:Connect(pressEnded))
-    track(body.InputBegan:Connect(pressBegan))
-    track(body.InputEnded:Connect(pressEnded))
 
-    -- Horizontal tabs: SLICE + BOOST.
-    local tabDefs = {
-        { id = "slice", label = "SLICE" },
-        { id = "boost", label = "BOOST" },
+    -- Build pages, then slots in the rail.
+    local defs = {
+        { id = "slice", icon = "bolt", build = function(pg)
+            micro(pg, 12, "AUTOMATION")
+            toggleRow(pg, 30, "Auto Slice", state.autoSwing,
+                function(v)
+                    state.autoSwing = v
+                    if v then fireSlash() end
+                end)
+            hairline(pg, 64, CONTENT_W - 24)
+            toggleRow(pg, 65, "Turbo", state.turbo,
+                function(v) state.turbo = v end)
+            hairline(pg, 99, CONTENT_W - 24)
+            micro(pg, 110, "ACTIONS")
+            actionBtn(pg, 128, "SLICE x50 BURST", function() doBurst() end)
+            actionBtn(pg, 164, "RELOAD UI", function()
+                unload(true)
+                pcall(function()
+                    if gui.Parent then gui:Destroy() end
+                end)
+                task.wait(0.2)
+                buildUI()
+            end)
+        end },
+        { id = "boost", icon = "gauge", build = function(pg)
+            micro(pg, 12, "PERFORMANCE")
+            toggleRow(pg, 30, "FPS Boost", CONFIG.FpsBoost, function(v)
+                CONFIG.FpsBoost = v
+                if v then pcall(fpsBoost) end
+            end)
+            hairline(pg, 64, CONTENT_W - 24)
+            toggleRow(pg, 65, "Anti AFK", CONFIG.AntiAfk, function(v)
+                CONFIG.AntiAfk = v
+            end)
+            hairline(pg, 99, CONTENT_W - 24)
+            micro(pg, 110, "DANGER")
+            actionBtn(pg, 128, "APPLY FIX LAG", function()
+                pcall(fpsBoost)
+                CONFIG.SwingDelay = 0.35
+                CONFIG.FpsBoost = true
+                note("Lag fix applied")
+            end)
+            actionBtn(pg, 164, "UNLOAD SCRIPT",
+                function() unload() end, true)
+        end },
     }
-    local pages = {}
-    local tabBtns = {}
-    local curTab = "slice"
-    local function paintTabs()
-        for _, d in ipairs(tabDefs) do
-            local b = tabBtns[d.id]
-            if b then
-                local active = d.id == curTab
-                tw(b, { BackgroundColor3 = active and CARD2
-                    or Color3.fromRGB(19, 22, 29) }, 0.15)
-                b.TextColor3 = active and ACCENT or DIM
-            end
+
+    local PAGE_H = PH - 42
+    for i, d in ipairs(defs) do
+        local pg = Instance.new("CanvasGroup")
+        pg.Name = "Page_" .. d.id
+        pg.Size = UDim2.new(0, CONTENT_W, 0, PAGE_H)
+        pg.Position = UDim2.new(0, CONTENT_X, 0, 42)
+        pg.BackgroundTransparency = 1
+        pg.Visible = d.id == curTab
+        pg.GroupTransparency = d.id == curTab and 0 or 1
+        pg.Parent = main
+        pages[d.id] = pg
+        d.build(pg)
+
+        local slot = Instance.new("TextButton")
+        slot.Size = UDim2.new(1, 0, 0, 46)
+        slot.Position = UDim2.new(0, 0, 0, 6 + (i - 1) * 52)
+        slot.BackgroundTransparency = 1
+        slot.Text = ""
+        slot.AutoButtonColor = false
+        slot.Parent = rail
+        local tint = Instance.new("Frame")
+        tint.Size = UDim2.new(1, 0, 1, 0)
+        tint.BackgroundColor3 = Color3.fromRGB(28, 30, 40)
+        tint.BackgroundTransparency = 1
+        tint.BorderSizePixel = 0
+        tint.Parent = slot
+        local marker = Instance.new("Frame")
+        marker.Size = UDim2.new(0, 2, 0, 20)
+        marker.AnchorPoint = Vector2.new(0, 0.5)
+        marker.Position = UDim2.new(0, 0, 0.5, 0)
+        marker.BackgroundColor3 = ACCENT
+        marker.BackgroundTransparency = 1
+        marker.BorderSizePixel = 0
+        marker.Parent = slot
+        round(marker, 1)
+        local icon = railIcon(slot, d.icon, 0)
+        local tip = Instance.new("TextLabel")
+        tip.Size = UDim2.new(0, 40, 0, 12)
+        tip.AnchorPoint = Vector2.new(0, 0)
+        tip.Position = UDim2.new(0.5, -20, 1, 3)
+        tip.BackgroundTransparency = 1
+        tip.Font = Enum.Font.Code
+        tip.TextSize = 8
+        tip.TextColor3 = DIM
+        tip.Text = d.id:upper()
+        tip.Parent = slot
+        tabSlots[d.id] = { slot = slot, tint = tint,
+            marker = marker, icon = icon, tip = tip }
+    end
+
+    local function paintRail()
+        for _, d in ipairs(defs) do
+            local s = tabSlots[d.id]
+            local active = d.id == curTab
+            tw(s.tint, { BackgroundTransparency =
+                active and 0 or 1 }, 0.18)
+            tw(s.marker, { BackgroundTransparency =
+                active and 0 or 1 }, 0.18)
+            s.tip.TextColor3 = active and INK or DIM
+            s.icon.Position = UDim2.new(0.5, 0, 0, active and -4 or 0)
         end
     end
+
     local function switchTab(id)
         if id == curTab then return end
         local old = pages[curTab]
         curTab = id
-        paintTabs()
+        paintRail()
         local new = pages[curTab]
         if old then
-            local f = tw(old, { GroupTransparency = 1 }, 0.12)
+            local f = tw(old, { GroupTransparency = 1 }, 0.1)
             pcall(function()
                 f.Completed:Wait()
                 if pages[curTab] ~= old then old.Visible = false end
@@ -528,175 +864,37 @@ local function buildUI()
         end
         if new then
             new.Visible = true
-            tw(new, { GroupTransparency = 0 }, 0.18)
+            tw(new, { GroupTransparency = 0 }, 0.16)
         end
     end
-    local TW = (PW - 24 - 8) / 2
-    for i, d in ipairs(tabDefs) do
-        local b = Instance.new("TextButton")
-        b.Size = UDim2.new(0, TW, 0, 30)
-        b.Position = UDim2.new(0, 12 + (i - 1) * (TW + 8), 0, 6)
-        b.BackgroundColor3 = Color3.fromRGB(19, 22, 29)
-        b.BorderSizePixel = 0
-        b.Font = Enum.Font.Code
-        b.TextSize = 11
-        b.TextColor3 = DIM
-        b.Text = d.label
-        b.AutoButtonColor = false
-        b.Parent = body
-        round(b, 8)
-        stroke(b, Color3.fromRGB(55, 60, 78), 0.55)
-        tabBtns[d.id] = b
-        track(b.InputBegan:Connect(function(input)
+    paintRail()
+
+    for _, d in ipairs(defs) do
+        local s = tabSlots[d.id]
+        track(s.slot.InputBegan:Connect(function(input)
             if not isTouch(input) then return end
             pressBegan(input)
         end))
-        track(b.InputEnded:Connect(function(input)
+        track(s.slot.InputEnded:Connect(function(input)
             if not isTouch(input) then return end
             if pressEnded(input) then switchTab(d.id) end
         end))
-        local pg = Instance.new("CanvasGroup")
-        pg.Name = "Page_" .. d.id
-        pg.Size = UDim2.new(1, -24, 0, 172)
-        pg.Position = UDim2.new(0, 12, 0, 44)
-        pg.BackgroundTransparency = 1
-        pg.Visible = d.id == curTab
-        pg.GroupTransparency = d.id == curTab and 0 or 1
-        pg.Parent = body
-        pages[d.id] = pg
     end
-    paintTabs()
 
-    local COLW = (PW - 24 - 8) / 2
-    local function toggleCell(parent, col, row, labelText, initial, cb)
-        local card = Instance.new("TextButton")
-        card.Size = UDim2.new(0, COLW, 0, 40)
-        card.Position = UDim2.new(0, col * (COLW + 8), 0, row * 48)
-        card.BackgroundColor3 = CARD
-        card.BorderSizePixel = 0
-        card.Text = ""
-        card.AutoButtonColor = false
-        card.Parent = parent
-        round(card, 10)
-        stroke(card, Color3.fromRGB(55, 60, 78), 0.55)
-
-        local lb = Instance.new("TextLabel")
-        lb.Size = UDim2.new(1, -70, 1, 0)
-        lb.Position = UDim2.new(0, 10, 0, 0)
-        lb.BackgroundTransparency = 1
-        lb.Font = Enum.Font.Code
-        lb.TextSize = 11
-        lb.TextXAlignment = Enum.TextXAlignment.Left
-        lb.TextColor3 = INK
-        lb.Text = labelText
-        lb.Parent = card
-
-        local sw = Instance.new("Frame")
-        sw.Size = UDim2.new(0, 44, 0, 24)
-        sw.AnchorPoint = Vector2.new(1, 0.5)
-        sw.Position = UDim2.new(1, -10, 0.5, 0)
-        sw.BorderSizePixel = 0
-        sw.Parent = card
-        round(sw, 12)
-
-        local knob = Instance.new("Frame")
-        knob.Size = UDim2.new(0, 18, 0, 18)
-        knob.AnchorPoint = Vector2.new(0, 0.5)
-        knob.Position = UDim2.new(0, 3, 0.5, 0)
-        knob.BackgroundColor3 = Color3.fromRGB(245, 245, 250)
-        knob.BorderSizePixel = 0
-        knob.Parent = sw
-        round(knob, 9)
-
-        local on = initial
-        local function paint(animate)
-            local swC = on and ACCENT or Color3.fromRGB(48, 52, 68)
-            local kx = on and UDim2.new(1, -21, 0.5, 0)
-                or UDim2.new(0, 3, 0.5, 0)
-            if animate then
-                tw(sw, { BackgroundColor3 = swC }, 0.2)
-                tw(knob, { Position = kx }, 0.22,
-                    Enum.EasingStyle.Back)
-            else
-                sw.BackgroundColor3 = swC
-                knob.Position = kx
-            end
+    -- Live hit readout.
+    task.spawn(function()
+        while alive and _G.NSSD_Gen == myGen do
+            pcall(function() readout.Text = "hits " .. tostring(hits) end)
+            task.wait(0.5)
         end
-        paint(false)
-        track(card.InputBegan:Connect(pressBegan))
-        track(card.InputEnded:Connect(function(input)
-            if pressEnded(input) then
-                on = not on
-                paint(true)
-                cb(on)
-            end
-        end))
-    end
-
-    local function wideBtn(parent, row, labelText, cb, danger)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, 0, 0, 38)
-        btn.Position = UDim2.new(0, 0, 0, row * 46)
-        btn.BackgroundColor3 = danger and Color3.fromRGB(52, 24, 26)
-            or CARD2
-        btn.BorderSizePixel = 0
-        btn.Font = Enum.Font.Code
-        btn.TextSize = 12
-        btn.TextColor3 = danger and Color3.fromRGB(255, 175, 175) or INK
-        btn.Text = labelText
-        btn.AutoButtonColor = false
-        btn.Parent = parent
-        round(btn, 10)
-        if danger then
-            stroke(btn, Color3.fromRGB(170, 80, 85), 0.4)
-        else
-            stroke(btn, Color3.fromRGB(70, 76, 100), 0.5)
-        end
-        local base = btn.BackgroundColor3
-        local dark = Color3.new(
-            math.max(base.R - 0.06, 0),
-            math.max(base.G - 0.06, 0),
-            math.max(base.B - 0.06, 0))
-        track(btn.InputBegan:Connect(function(input)
-            if not isTouch(input) then return end
-            pressBegan(input)
-            tw(btn, { BackgroundColor3 = dark }, 0.1)
-        end))
-        track(btn.InputEnded:Connect(function(input)
-            if not isTouch(input) then return end
-            tw(btn, { BackgroundColor3 = base }, 0.15)
-            if pressEnded(input) then cb() end
-        end))
-    end
-
-    local slice = pages.slice
-    toggleCell(slice, 0, 0, "Auto Slice", state.autoSwing,
-        function(v)
-            state.autoSwing = v
-            if v then fireSlash() end
-        end)
-    toggleCell(slice, 1, 0, "Turbo", state.turbo,
-        function(v) state.turbo = v end)
-    wideBtn(slice, 1, "SLICE x50 BURST", function() doBurst() end)
-
-    local boost = pages.boost
-    wideBtn(boost, 0, "FIX LAG", function()
-        pcall(fpsBoost)
-        CONFIG.SwingDelay = 0.35
-        note("Lag fix applied")
     end)
-    wideBtn(boost, 1, "UNLOAD SCRIPT", function() unload() end, true)
-
-    local fullH = y + 224 + 12
-    body.Size = UDim2.new(1, 0, 0, 224)
-    main.Size = UDim2.new(0, PW, 0, fullH)
 
     local collapsed = false
     track(mini.MouseButton1Click:Connect(function()
         collapsed = not collapsed
         mini.Text = collapsed and "+" or "-"
-        tw(main, { Size = collapsed and UDim2.new(0, PW, 0, 52)
-            or UDim2.new(0, PW, 0, fullH) }, 0.3,
+        tw(main, { Size = collapsed and UDim2.new(0, PW, 0, 42)
+            or UDim2.new(0, PW, 0, PH) }, 0.28,
             Enum.EasingStyle.Quart)
     end))
 
@@ -704,10 +902,10 @@ local function buildUI()
 
     local endPos = main.Position
     main.Position = UDim2.new(endPos.X.Scale, endPos.X.Offset,
-        endPos.Y.Scale, endPos.Y.Offset + 24)
+        endPos.Y.Scale, endPos.Y.Offset + 18)
     main.Visible = true
-    tw(main, { GroupTransparency = 0 }, 0.3)
-    tw(main, { Position = endPos }, 0.35, Enum.EasingStyle.Back)
+    tw(main, { GroupTransparency = 0 }, 0.28)
+    tw(main, { Position = endPos }, 0.34, Enum.EasingStyle.Back)
     return true
 end
 
