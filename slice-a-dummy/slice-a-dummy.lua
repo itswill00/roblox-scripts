@@ -221,23 +221,37 @@ task.spawn(function()
     end
 end)
 
--- NS Console UI. Concept notes (references: Fluent / WindUI / Rayfield,
--- plus mobile layout rules: tabs for 2-6 peer sections, >=44px touch
--- targets, stable content height, progressive disclosure on landscape).
---   * Left icon rail instead of a top tab bar: vertical space is the
---     scarce axis on a phone in landscape, so navigation moves there.
---   * Hairline rows instead of a card per option: ~2x the density.
---   * One signature accent per game, thin double ring + idle breathing
---     on the emblem, monospace readouts in the header.
+-- NS Console UI.
+-- References actually read (not guessed):
+--   WindUI src/themes/Init.lua + window/Init.lua -- neutral token set,
+--     pill CornerRadius(1,0) on small controls, 16px icons, translucent
+--     panels.
+--   Rayfield docs/themes -- every theme is flat neutral plus ONE state
+--     color; color means "selected", never branding.
+--   Mobile layout rules -- tabs for 2-6 peer sections, >=44px touch
+--     targets, stable content height, progressive disclosure.
+-- Departures from those libraries, on purpose:
+--   * Left icon rail instead of a top tab bar. These scripts run on a
+--     phone in landscape where vertical space is the scarce axis.
+--   * Hairline rows instead of one card per option: ~2x density.
+-- Palette consequence: ONE functional accent (green = ON). No per-game
+-- hue, because then the accent could not double as "enabled".
 local TweenService = game:GetService("TweenService")
 
-local ACCENT = Color3.fromRGB(255, 138, 110)
-local ACCENT_DIM = Color3.fromRGB(96, 52, 44)
-local BASE = Color3.fromRGB(13, 14, 18)
-local RAILL = Color3.fromRGB(17, 18, 23)
-local HAIR = Color3.fromRGB(38, 40, 50)
-local INK = Color3.fromRGB(232, 232, 240)
-local DIM = Color3.fromRGB(132, 136, 152)
+-- Palette: WindUI Dark tokens (verified from the library source) and
+-- Rayfield's neutral rule -- grayscale surface plus exactly one
+-- functional color for ON states. No per-game hues: the accent must
+-- mean "enabled", so it cannot double as branding.
+local ACCENT = Color3.fromRGB(51, 199, 89)     -- #33C759 functional ON
+local PRIMARY = Color3.fromRGB(0, 145, 255)   -- #0091FF focus/primary
+local BASE = Color3.fromRGB(16, 16, 16)       -- #101010
+local DIALOG = Color3.fromRGB(26, 26, 26)     -- #1a1a1a
+local ELEMENT = Color3.fromRGB(42, 42, 44)    -- #2A2A2C
+local HAIR = Color3.fromRGB(54, 54, 58)
+local INK = Color3.fromRGB(255, 255, 255)
+local PLACE = Color3.fromRGB(161, 161, 161)   -- #a1a1a1
+local ICON = Color3.fromRGB(161, 161, 170)    -- #a1a1aa
+local DIM = PLACE
 
 local function tw(obj, props, dur, style, dir)
     local t = TweenService:Create(obj,
@@ -278,7 +292,7 @@ local function railIcon(parent, kind, cy)
         b.Size = UDim2.new(0, w, 0, h)
         b.AnchorPoint = Vector2.new(0.5, 0.5)
         b.Position = UDim2.new(0.5, x, 0.5, y)
-        b.BackgroundColor3 = col or Color3.fromRGB(150, 154, 170)
+        b.BackgroundColor3 = col or ICON
         b.BorderSizePixel = 0
         b.Rotation = rot or 0
         b.Parent = holder
@@ -296,7 +310,7 @@ local function railIcon(parent, kind, cy)
         ring.Parent = holder
         round(ring, 8)
         local s = Instance.new("UIStroke")
-        s.Color = Color3.fromRGB(150, 154, 170)
+        s.Color = ICON
         s.Thickness = 2
         s.Parent = ring
         bar(2, 6, 2, -2, 35)
@@ -307,7 +321,7 @@ local function railIcon(parent, kind, cy)
         o.Parent = holder
         round(o, 3)
         local s = Instance.new("UIStroke")
-        s.Color = Color3.fromRGB(150, 154, 170)
+        s.Color = ICON
         s.Thickness = 1.5
         s.Parent = o
         bar(5, 2, 0, 0, 0)
@@ -335,7 +349,7 @@ local function buildEmblem(parent, panel)
     emb.Name = "Emblem"
     emb.Size = UDim2.new(0, 54, 0, 54)
     emb.Position = UDim2.new(0.5, -27, 0.5, -27)
-    emb.BackgroundColor3 = Color3.fromRGB(22, 20, 24)
+    emb.BackgroundColor3 = DIALOG
     emb.BorderSizePixel = 0
     emb.Font = Enum.Font.Code
     emb.TextSize = 19
@@ -347,15 +361,15 @@ local function buildEmblem(parent, panel)
 
     local grad = Instance.new("UIGradient")
     grad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, ACCENT_DIM),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(14, 14, 18)),
+        ColorSequenceKeypoint.new(0, ELEMENT),
+        ColorSequenceKeypoint.new(1, BASE),
     })
     grad.Rotation = 40
     grad.Parent = emb
 
     -- Double thin ring: outer accent hairline + inner gap ring.
     local ring = Instance.new("UIStroke")
-    ring.Color = ACCENT
+    ring.Color = PLACE
     ring.Thickness = 1.5
     ring.Parent = emb
 
@@ -367,7 +381,7 @@ local function buildEmblem(parent, panel)
     ring2.Parent = emb
     round(ring2, 23)
     local ring2s = Instance.new("UIStroke")
-    ring2s.Color = Color3.fromRGB(220, 200, 195)
+    ring2s.Color = Color3.fromRGB(226, 226, 232)
     ring2s.Thickness = 1
     ring2s.Transparency = 0.55
     ring2s.Parent = ring2
@@ -402,7 +416,7 @@ local function buildEmblem(parent, panel)
                         if not visible then panel.Visible = false end
                     end)
                 end
-                ring.Color = visible and ACCENT or DIM
+                ring.Color = visible and PLACE or ICON
             end
             downPos = nil
         end
@@ -464,6 +478,7 @@ local function buildUI()
     main.Name = "Panel"
     main.Position = UDim2.new(0, 14, 0, 56)
     main.BackgroundColor3 = BASE
+    main.BackgroundTransparency = 0.04
     main.BorderSizePixel = 0
     main.ClipsDescendants = true
     main.GroupTransparency = 1
@@ -483,7 +498,7 @@ local function buildUI()
     local badge = Instance.new("TextLabel")
     badge.Size = UDim2.new(0, 22, 0, 22)
     badge.Position = UDim2.new(0, 12, 0.5, -11)
-    badge.BackgroundColor3 = Color3.fromRGB(30, 24, 28)
+    badge.BackgroundColor3 = ELEMENT
     badge.BorderSizePixel = 0
     badge.Font = Enum.Font.Code
     badge.TextSize = 11
@@ -539,7 +554,7 @@ local function buildUI()
     rail.Name = "Rail"
     rail.Size = UDim2.new(0, RAIL, 1, -42)
     rail.Position = UDim2.new(0, 0, 0, 42)
-    rail.BackgroundColor3 = RAILL
+    rail.BackgroundColor3 = DIALOG
     rail.BorderSizePixel = 0
     rail.Parent = main
 
@@ -603,23 +618,27 @@ local function buildUI()
         sw.Size = UDim2.new(0, 34, 0, 19)
         sw.AnchorPoint = Vector2.new(1, 0.5)
         sw.Position = UDim2.new(1, -12, 0.5, 0)
-        sw.BackgroundColor3 = Color3.fromRGB(44, 46, 56)
+        sw.BackgroundColor3 = ELEMENT
         sw.BorderSizePixel = 0
         sw.Parent = row
-        round(sw, 10)
+        local swc = Instance.new("UICorner")
+        swc.CornerRadius = UDim.new(1, 0)
+        swc.Parent = sw
 
         local knob = Instance.new("Frame")
         knob.Size = UDim2.new(0, 13, 0, 13)
         knob.AnchorPoint = Vector2.new(0, 0.5)
         knob.Position = UDim2.new(0, 3, 0.5, 0)
-        knob.BackgroundColor3 = Color3.fromRGB(210, 212, 222)
+        knob.BackgroundColor3 = INK
         knob.BorderSizePixel = 0
         knob.Parent = sw
-        round(knob, 7)
+        local kc = Instance.new("UICorner")
+        kc.CornerRadius = UDim.new(1, 0)
+        kc.Parent = knob
 
         local on = initial
         local function paint(animate)
-            local target = on and ACCENT or Color3.fromRGB(44, 46, 56)
+            local target = on and ACCENT or ELEMENT
             local kx = on and UDim2.new(1, -16, 0.5, 0)
                 or UDim2.new(0, 3, 0.5, 0)
             if animate then
@@ -652,8 +671,8 @@ local function buildUI()
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(1, -48, 0, 30)
         btn.Position = UDim2.new(0, 24, 0, yPos)
-        btn.BackgroundColor3 = danger and Color3.fromRGB(46, 22, 24)
-            or Color3.fromRGB(26, 28, 36)
+        btn.BackgroundColor3 = danger and Color3.fromRGB(52, 24, 26)
+            or ELEMENT
         btn.BorderSizePixel = 0
         btn.Font = Enum.Font.Code
         btn.TextSize = 11
@@ -808,7 +827,7 @@ local function buildUI()
         slot.Parent = rail
         local tint = Instance.new("Frame")
         tint.Size = UDim2.new(1, 0, 1, 0)
-        tint.BackgroundColor3 = Color3.fromRGB(28, 30, 40)
+        tint.BackgroundColor3 = Color3.fromRGB(58, 58, 64)
         tint.BackgroundTransparency = 1
         tint.BorderSizePixel = 0
         tint.Parent = slot
