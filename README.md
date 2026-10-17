@@ -45,8 +45,9 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scri
 Remote teramati dari skrip publik — kalau game update dan ada yang mati,
 mapping ulang via SimpleSpy, yang diganti cuma CONFIG.
 
-`slice.lua` — v0.3.0, cache-proof mirror (same content). Landscape tabs,
-toggle switches, bright NS emblem, grab-anywhere drag, generation guard.
+`slice.lua` — v0.4.0, cache-proof mirror (same content). "NS Console" UI:
+left icon rail, dense hairline rows, signature accent per game, breathing
+emblem, live hit readout, grab-anywhere drag, generation guard.
 
 ```lua
 loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/slice-a-dummy/slice.lua"))()
