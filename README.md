@@ -66,46 +66,6 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scri
 loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/greedy-growers/gg.lua"))()
 ```
 
-## NetLens RemoteSpy (`remote-spy/`)
-
-`remote-spy.lua` — v1.2.5, full English, landscape single page:
-
-- Merges duplicate calls (xN), tap row to copy paste-ready snippet,
-  per-row blacklist, pause/clear/copy-all, merge + args-only toggles.
-- Capped buffer, truncated previews, discreet GUI names.
-- Verifies itself at startup: fires a canary RemoteEvent and reports
-  `LIVE <mode>` or `DEAD` instead of always claiming "armed".
-
-### v1.2.5 — hook install fix (v1.2.4 was dead on mobile executors)
-
-v1.2.4 used `hookfunction`'s return value both as the "did it install?" flag
-and as the original to call through. Several mobile executors return nothing
-on success, so the hook went live with a `nil` passthrough: every
-`:FireServer()`/`:InvokeServer()` in the game threw `attempt to call a nil
-value` and zero rows were ever logged, while the status line still read
-"armed". The same trap in the `__namecall` fallbacks broke every `:Method()`
-call in the client, not just remotes.
-
-- Originals are captured **before** hooking; `hookfunction`'s return value is
-  never read.
-- Probe instances are never destroyed — some executors return per-instance
-  bound closures, and `Destroy` silently unhooks the game.
-- `getnamecallmethod` is no longer a fatal gate; falls back to `debug.info`
-  then to RemoteClass classification instead of logging nothing.
-- The `hookmetamethod` path refuses to install when it has no safe passthrough.
-- `unload()` restores against the current slot occupant (v1.2.4 hooked a
-  destroyed probe instance) and clears state.
-- Arguments carry an explicit count end to end, so `InvokeServer(x, nil, nil)`
-  is no longer truncated to one argument on replay.
-
-If the verdict reads `DEAD`, the executor's `hookfunction` is genuinely stubbed
-and no script-side change can make remote logging work there. The diagnostic
-now says so instead of leaving an empty panel.
-
-```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/remote-spy/remote-spy.lua"))()
-```
-
 ## Build the Pyramid (`build-a-pyramid/`)
 
 `build-a-pyramid.lua` — v0.1.0, Knit game (Services.<Svc>.RF):
