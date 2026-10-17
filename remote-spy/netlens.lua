@@ -1,4 +1,4 @@
--- NullShight NetLens // v1.2.5 -- RemoteSpy
+-- NullShight NetLens // v1.2.6 -- RemoteSpy
 -- A precise, low-footprint network lens: logs RemoteEvent/RemoteFunction
 -- traffic, coalesces duplicates, and generates paste-ready call snippets.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -296,7 +296,7 @@ local seqNum = 0
 local function statsText()
     local n = 0
     for _ in pairs(remoteSet) do n = n + 1 end
-    return "NETLENS v1.2.5  |  " .. tostring(n) .. " remotes  |  " ..
+    return "NETLENS v1.2.6  |  " .. tostring(n) .. " remotes  |  " ..
         tostring(totalCalls) .. " calls  |  " .. hookInfo
 end
 
