@@ -1,4 +1,4 @@
--- NullShight NetLens // v1.2.4 -- RemoteSpy
+-- NullShight NetLens // v1.2.5 -- RemoteSpy
 -- A precise, low-footprint network lens: logs RemoteEvent/RemoteFunction
 -- traffic, coalesces duplicates, and generates paste-ready call snippets.
 -- Executor-agnostic Luau (Delta / Fluxus / Wave mobile friendly).
@@ -72,27 +72,56 @@ local function note(msg)
     end)
 end
 
+-- Declared up here, not in the hook section: unload() below reads them, and a
+-- local declared further down is not in scope inside an earlier closure.
+local hasHookFn = type(hookfunction) == "function"
+local hasHookMM = type(hookmetamethod) == "function"
+local hasRawMT = type(getrawmetatable) == "function"
+local hasGNM = type(getnamecallmethod) == "function"
+
 local oldNC, oldEvent, oldFunc, oldRaw, rawMT = nil, nil, nil, nil, nil
+-- Why a fallback path was skipped, surfaced verbatim in the verdict.
+local hookSkip = ""
+-- Probe instances are module-scoped so unload can re-fetch the live method
+-- for restoration, and so they stay parentless-but-alive for the whole
+-- session. Destroying them can silently unhook the game on executors that
+-- hand back a per-instance bound closure.
+local probeE, probeF
 local hookMode = "none"
 local function unload(quiet)
     if not alive then return end
     alive = false
     pcall(function()
-        if hookMode == "hookfunction" and type(hookfunction) == "function" then
-            local probeE = Instance.new("RemoteEvent")
-            local probeF = Instance.new("RemoteFunction")
-            if oldEvent then hookfunction(probeE.FireServer, oldEvent) end
-            if oldFunc then hookfunction(probeF.InvokeServer, oldFunc) end
-            pcall(function() probeE:Destroy() end)
-            pcall(function() probeF:Destroy() end)
-        elseif hookMode == "namecall" and type(hookmetamethod) == "function"
-            and oldNC then
-            hookmetamethod(game, "__namecall", oldNC)
-        elseif hookMode == "rawnamecall" and type(hookfunction) == "function"
-            and rawMT and oldRaw then
-            hookfunction(rawMT.__namecall, oldRaw)
+        if hookMode == "hookfunction" then
+            -- Restore targets the CURRENT occupant of the slot, not the
+            -- original we saved: hookfunction replaced the slot contents,
+            -- so the saved original is what we put back.
+            if probeE and type(oldEvent) == "function" and hasHookFn then
+                local live = probeE.FireServer
+                if type(live) == "function" then hookfunction(live, oldEvent) end
+            end
+            if probeF and type(oldFunc) == "function" and hasHookFn then
+                local live = probeF.InvokeServer
+                if type(live) == "function" then hookfunction(live, oldFunc) end
+            end
+        elseif hookMode == "rawnamecall" then
+            if rawMT and type(oldRaw) == "function" and hasHookFn then
+                local live = rawMT.__namecall
+                if type(live) == "function" then hookfunction(live, oldRaw) end
+            end
+        elseif hookMode == "namecall" then
+            if hasHookMM and type(oldNC) == "function" then
+                hookmetamethod(game, "__namecall", oldNC)
+            end
         end
     end)
+    hookMode = "restored"
+    oldEvent, oldFunc, oldNC, oldRaw = nil, nil, nil, nil
+    pcall(function()
+        probeE:Destroy()
+        probeF:Destroy()
+    end)
+    probeE, probeF = nil, nil
     for _, c in ipairs(conns) do
         pcall(function() c:Disconnect() end)
     end
@@ -267,7 +296,7 @@ local seqNum = 0
 local function statsText()
     local n = 0
     for _ in pairs(remoteSet) do n = n + 1 end
-    return "NETLENS v1.2.4  |  " .. tostring(n) .. " remotes  |  " ..
+    return "NETLENS v1.2.5  |  " .. tostring(n) .. " remotes  |  " ..
         tostring(totalCalls) .. " calls  |  " .. hookInfo
 end
 
@@ -331,10 +360,12 @@ local function fireSelected()
         return
     end
     local ok, err = pcall(function()
+        -- Explicit bounds: plain unpack() stops at the first nil and would
+        -- replay the call with the wrong argument count.
         if e.method == "FireServer" then
-            e.ref:FireServer(unpack(e.callArgs))
+            e.ref:FireServer(table.unpack(e.callArgs, 1, e.argCount))
         else
-            e.ref:InvokeServer(unpack(e.callArgs))
+            e.ref:InvokeServer(table.unpack(e.callArgs, 1, e.argCount))
         end
     end)
     note(ok and ("Fired " .. e.name) or ("Fire failed: " .. tostring(err)))
@@ -428,11 +459,11 @@ local function wireRow(e, row, tap)
     end))
 end
 
-local function logCall(inst, method, args)
+local function logCall(inst, method, args, argCount)
     if not mine() or state.paused then return end
     local path = instPath(inst)
     if blacklist[path] then return end
-    local n = #args
+    local n = argCount or #args
     if state.argsOnly and n == 0 then return end
     totalCalls = totalCalls + 1
     remoteSet[path] = true
@@ -468,8 +499,8 @@ local function logCall(inst, method, args)
     -- Build paste-ready snippet.
     local sargs = {}
     for i = 1, n do sargs[#sargs + 1] = serialize(args[i]) end
-    local call = method == "FireServer" and ":FireServer(unpack(args))"
-        or ":InvokeServer(unpack(args))"
+    local call = method == "FireServer" and ":FireServer(table.unpack(args, 1, n))"
+        or ":InvokeServer(table.unpack(args, 1, n))"
     local snippet = "local args = { " .. table.concat(sargs, ", ") .. " }\n" ..
         path .. call
 
@@ -482,7 +513,8 @@ local function logCall(inst, method, args)
         count = 1, preview = argsPrev .. "   <- " .. caller,
         snippet = snippet,
         snippetPreview = string.sub(oneLine, 1, 120),
-        callArgs = callArgs, ref = inst, seq = seqNum, row1 = nil,
+        callArgs = callArgs, argCount = n, ref = inst, seq = seqNum,
+        row1 = nil,
     }
     byKey[key] = e
     entries[#entries + 1] = e
@@ -492,97 +524,174 @@ local function logCall(inst, method, args)
     refreshStats()
 end
 
--- Hooks (SimpleSpy-proven recipe):
---   1. hookfunction on the real FireServer/InvokeServer C closures
---      (via a sacrificial instance). Catches every call, no
---      getnamecallmethod needed. Primary.
---   2. Fallback: hookmetamethod(game, "__namecall", ...) -- note the name
---      is __namecall, NOT __namecallmethod (wrong name = dead silent hook).
--- Only one path is ever installed, so nothing is logged twice.
--- checkcaller filter keeps our own scripts out of the log by default.
-local hasHookFn = type(hookfunction) == "function"
-local hasHookMM = type(hookmetamethod) == "function"
-local hasRawMT = type(getrawmetatable) == "function"
-local hasGNM = type(getnamecallmethod) == "function"
+-- Hooks (v1.2.5 -- self-checked install).
+--
+-- v1.2.4 was dead on every mobile executor. It used hookfunction's RETURN
+-- VALUE as two things at once: the "did it install?" flag, and the original
+-- to call through. Several executors return nothing on success, so the hook
+-- went live with a nil passthrough: every :FireServer() in the whole game
+-- threw "attempt to call a nil value", zero rows were ever logged, and the
+-- status line still cheerfully said "armed". Same trap in both namecall
+-- fallbacks, and there it breaks EVERY namecall, not just remotes.
+--
+-- Fix, three rules:
+--   1. Capture the original BEFORE hooking. Never read hookfunction's return.
+--   2. A probe instance is never destroyed: if the executor hands back a
+--      per-instance bound closure, Destroy silently unhooks the game.
+--   3. Name resolution must never be the only gate. If getnamecallmethod is
+--      missing, fall back to debug.info and still log what the class is.
+--
+-- Order of preference:
+--   1. hookfunction on the real FireServer/InvokeServer C closures.
+--   2. hookfunction on the raw __namecall metamethod.
+--   3. hookmetamethod(game, "__namecall", ...).
+-- Only one path installs, so nothing is logged twice.
+-- (hasHookFn / hasHookMM / hasRawMT / hasGNM are declared above unload().)
+
+-- Packs varargs with an explicit count. A plain { ... } table constructor
+-- truncates at the first nil, which silently changes InvokeServer(x, nil, nil)
+-- into a one-argument call when the snippet is replayed.
+local function packArgs(...)
+    local n = select("#", ...)
+    local t = {}
+    for i = 1, n do t[i] = (select(i, ...)) end
+    return t, n
+end
+
+-- Resolves the called method name inside a namecall hook. Returns "" when the
+-- executor exposes no way to know it; callers must not treat that as fatal.
+local function calledMethod()
+    if hasGNM then
+        local ok, m = pcall(getnamecallmethod)
+        if ok and type(m) == "string" and m ~= "" then return m end
+    end
+    local ok2, m2 = pcall(function()
+        return debug.info(2, "name")
+    end)
+    if ok2 and type(m2) == "string" and m2 ~= "" then return m2 end
+    return ""
+end
+
 pcall(function()
     local wrap = newcclosure or function(f) return f end
-    local function handle(method, self, args)
-        local m = string.lower(tostring(method or ""))
-        if m ~= "fireserver" and m ~= "invokeserver" then return end
-        method = (m == "fireserver") and "FireServer" or "InvokeServer"
-        local okClass = false
-        pcall(function()
-            okClass = self:IsA("RemoteEvent") or self:IsA("RemoteFunction")
+
+    local function isRemoteClass(self)
+        local ok, a, b = pcall(function()
+            return self:IsA("RemoteEvent"), self:IsA("RemoteFunction")
         end)
-        if not okClass then return end
+        return ok and (a or b) == true
+    end
+
+    local function handle(method, self, args, n)
+        if not isRemoteClass(self) then return end
         ncTotal = ncTotal + 1
+        local m = string.lower(tostring(method or ""))
+        if m ~= "fireserver" and m ~= "invokeserver" then
+            if m == "" then
+                -- No name available, but we know the target is a remote and
+                -- that it was reached through :Method(). FireServer cannot
+                -- return a value, so a call with no expectation is the safe
+                -- classification. RemoteFunction traffic gets corrected the
+                -- moment getnamecallmethod shows up.
+                m = "fireserver"
+            else
+                return
+            end
+        end
+        local resolved = (m == "fireserver") and "FireServer" or "InvokeServer"
         if not CONFIG.LogOwn and type(checkcaller) == "function" then
             local okC, isOurs = pcall(checkcaller)
             if okC and isOurs then return end
         end
-        pcall(logCall, self, method, args)
+        pcall(logCall, self, resolved, args, n)
     end
+
+    -- 1. Direct C-closure hooks. Originals captured first, assigned to
+    -- oldEvent/oldFunc BEFORE hookfunction runs, so the passthrough inside
+    -- the replacement can never see nil even if the hook is installed
+    -- synchronously.
     if hasHookFn then
         pcall(function()
-            local probeE = Instance.new("RemoteEvent")
-            local probeF = Instance.new("RemoteFunction")
-            local ev = hookfunction(probeE.FireServer, wrap(function(self, ...)
-                handle("FireServer", self, { ... })
+            probeE = Instance.new("RemoteEvent")
+            probeF = Instance.new("RemoteFunction")
+            local origE = probeE.FireServer
+            local origF = probeF.InvokeServer
+            if type(origE) ~= "function" or type(origF) ~= "function" then
+                return
+            end
+            oldEvent, oldFunc = origE, origF
+            pcall(hookfunction, origE, wrap(function(self, ...)
+                local a, n = packArgs(...)
+                handle("FireServer", self, a, n)
                 return oldEvent(self, ...)
             end))
-            local fn = hookfunction(probeF.InvokeServer, wrap(function(self, ...)
-                handle("InvokeServer", self, { ... })
+            pcall(hookfunction, origF, wrap(function(self, ...)
+                local a, n = packArgs(...)
+                handle("InvokeServer", self, a, n)
                 return oldFunc(self, ...)
             end))
-            pcall(function() probeE:Destroy() end)
-            pcall(function() probeF:Destroy() end)
-            -- Both originals must be real: a half-install would break
-            -- every remote in the game, so fall through instead.
-            if ev ~= nil and fn ~= nil then
-                oldEvent, oldFunc = ev, fn
-                hookMode = "hookfunction"
-            end
+            hookMode = "hookfunction"
         end)
     end
+
+    -- 2. Raw __namecall. Same discipline: save the original, then hook, and
+    -- do not care what hookfunction hands back.
     if hookMode == "none" and hasHookFn and hasRawMT then
         pcall(function()
             local mt = getrawmetatable(game)
             if type(mt) ~= "table" or type(mt.__namecall) ~= "function" then
                 return
             end
-            local nc = hookfunction(mt.__namecall, wrap(function(self, ...)
-                local method = ""
-                pcall(function()
-                    if type(getnamecallmethod) == "function" then
-                        method = getnamecallmethod()
-                    end
-                end)
-                handle(method, self, { ... })
+            rawMT = mt
+            oldRaw = mt.__namecall
+            pcall(hookfunction, oldRaw, wrap(function(self, ...)
+                local a, n = packArgs(...)
+                handle(calledMethod(), self, a, n)
                 return oldRaw(self, ...)
             end))
-            if nc ~= nil then
-                rawMT, oldRaw = mt, nc
-                hookMode = "rawnamecall"
-            end
+            hookMode = "rawnamecall"
         end)
     end
+
+    -- 3. hookmetamethod. Note the name is __namecall, NOT __namecallmethod;
+    -- the wrong name installs a hook that never fires.
+    --
+    -- hookmetamethod is the one API here that does NOT hand back the
+    -- original on every executor, so a passthrough is only safe if we can
+    -- independently obtain the current __namecall. If we cannot, path 3 is
+    -- skipped entirely: a live hook whose replacement calls nil is far worse
+    -- than no hook, because it breaks every :Method() call in the game.
     if hookMode == "none" and hasHookMM then
         pcall(function()
-            local nc = hookmetamethod(game, "__namecall",
-                wrap(function(self, ...)
-                local method = ""
-                pcall(function()
-                    if type(getnamecallmethod) == "function" then
-                        method = getnamecallmethod()
-                    end
-                end)
-                handle(method, self, { ... })
-                return oldNC(self, ...)
-            end))
-            if nc ~= nil then
-                oldNC = nc
-                hookMode = "namecall"
+            -- Decide BEFORE installing. If we cannot independently obtain the
+            -- current __namecall, we have no safe passthrough, and a live hook
+            -- whose replacement calls nil breaks every :Method() in the game.
+            -- Refusing to install is strictly better than "looks armed".
+            local known = nil
+            if hasRawMT then
+                local mt = getrawmetatable(game)
+                if type(mt) == "table" and type(mt.__namecall) == "function" then
+                    known = mt.__namecall
+                end
             end
+            if type(known) ~= "function" then
+                hookSkip = "namecall:no-original"
+                return
+            end
+            oldNC = known
+            local captured
+            pcall(function()
+                captured = hookmetamethod(game, "__namecall",
+                    wrap(function(self, ...)
+                        local a, n = packArgs(...)
+                        handle(calledMethod(), self, a, n)
+                        return oldNC(self, ...)
+                    end))
+            end)
+            -- Prefer what hookmetamethod reported, keep the known original
+            -- either way: the passthrough is never left nil.
+            if type(captured) == "function" then oldNC = captured end
+            hookMode = "namecall"
         end)
     end
 end)
@@ -868,38 +977,37 @@ local function buildUI()
         refreshStats()
     end)
     toolBtn(2 * (bw + 8), bw, "TEST", function()
-        -- Two-stage verdict, no guessing:
-        -- 1) canary: hookfunction(print) must intercept a print call.
-        --    Proves hookfunction REALLY works (not a stub).
-        -- 2) remote: fire a temp RemoteEvent; a row must appear.
-        local canary = "hf:" .. type(hookfunction)
-        pcall(function()
-            if type(hookfunction) ~= "function" then
-                canary = "hf:missing"
-                return
-            end
-            local wrap = newcclosure or function(f) return f end
-            local hit = false
-            local orig = hookfunction(print, wrap(function(...)
-                hit = true
-                return orig(...)
-            end))
-            print("netlens_canary")
-            pcall(hookfunction, print, orig)
-            canary = hit and "hf:WORKS" or "hf:STUBBED"
-        end)
-        local mm = "mm:" .. type(hookmetamethod)
+        -- Diagnostics only: reports what each layer actually did, so a dead
+        -- install is identifiable instead of mysterious. Never claims more
+        -- than it measured.
+        local hf = type(hookfunction)
+        local mm = type(hookmetamethod)
+        local gn = type(getnamecallmethod)
+        local mtOK = false
+        if type(getrawmetatable) == "function" then
+            pcall(function()
+                local mt = getrawmetatable(game)
+                mtOK = (type(mt) == "table")
+            end)
+        end
+
+        local before = ncTotal
         pcall(function()
             local t = Instance.new("RemoteEvent")
             t.Name = "NetLensSelfTest"
             t.Parent = workspace
-            t:FireServer("ping", 123)
-            t:Destroy()
+            t:FireServer("ping", 123, nil)
+            pcall(function() t:Destroy() end)
         end)
         task.delay(0.5, function()
-            note(canary .. " " .. mm .. " mode=" .. hookMode ..
-                " seen=" .. tostring(ncTotal) ..
-                " logged=" .. tostring(totalCalls))
+            local caught = ncTotal - before
+            note(string.format(
+                "hook=%s hf=%s mm=%s gnm=%s rawmt=%s seen=%d",
+                hookMode, hf, mm, gn, tostring(mtOK), caught))
+            if caught == 0 then
+                note("Hook caught nothing. If hf=function the executor "
+                    .. "stubs it; remote logging cannot work here.")
+            end
         end)
     end)
     toolBtn(3 * (bw + 8), bw, "COPY", function()
@@ -1167,12 +1275,37 @@ task.spawn(function()
     end
 end)
 
-if hookMode == "none" then
-    hookInfo = "HOOK FAILED (no hookfunction/hookmetamethod)"
-    note("Hook failed on this executor")
-else
-    hookInfo = "hook:" .. hookMode .. " gnm:" .. (hasGNM and "OK" or "MISSING")
-    note("NetLens armed (" .. hookMode .. "). Do an action in-game.")
-end
+-- Honest verdict. "Hook installed" is not evidence of anything: the v1.2.4
+-- release reported "armed" on executors where every remote call was throwing.
+-- So prove it end to end instead of claiming it -- fire a sacrificial
+-- RemoteEvent and check whether our own hook actually saw it.
+task.spawn(function()
+    if hookMode == "none" then
+        hookInfo = "DEAD: no hook API" .. (hookSkip ~= "" and (" (" .. hookSkip .. ")") or "")
+        note("NetLens DEAD - executor exposes no usable hookfunction/hookmetamethod")
+        return
+    end
+
+    local before = ncTotal
+    local canary = Instance.new("RemoteEvent")
+    canary.Name = "NetLensCanary"
+    canary.Parent = workspace
+    local fired = pcall(function() canary:FireServer("ping", 123, nil) end)
+    pcall(function() canary:Destroy() end)
+
+    task.wait(0.4)
+    if not mine() then return end
+
+    local gnm = hasGNM and "gnm:OK" or "gnm:MISSING"
+    if fired and ncTotal > before then
+        hookInfo = "LIVE " .. hookMode .. " " .. gnm
+        note("NetLens LIVE (" .. hookMode .. "). Do an action in-game.")
+    else
+        hookInfo = "DEAD " .. hookMode .. " (hook saw nothing)"
+        note("NetLens DEAD - hook installed but caught 0 of its own "
+            .. "canary FireServer. Try another executor; remote logging "
+            .. "cannot work here.")
+    end
+end)
 
 return true
