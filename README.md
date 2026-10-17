@@ -45,6 +45,13 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scri
 Remote teramati dari skrip publik — kalau game update dan ada yang mati,
 mapping ulang via SimpleSpy, yang diganti cuma CONFIG.
 
+`slice.lua` — v0.3.0, cache-proof mirror (same content). Landscape tabs,
+toggle switches, bright NS emblem, grab-anywhere drag, generation guard.
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/itswill00/roblox-scripts/main/slice-a-dummy/slice.lua"))()
+```
+
 ## Greedy Growers (`greedy-growers/`)
 
 `greedy-growers.lua` — v0.1.0, game Knit (Services.<Svc>.RF/.RE):
